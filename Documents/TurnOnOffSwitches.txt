@@ -1,0 +1,150 @@
+
+From:
+https://diysolarforum.com/threads/writing-data-to-jkbms-usb-ttl-rs-485.66034/
+
+I have not yet made my mind on how to send the password and I believe that is the culprit to be able to change parameters.
+These are the frames I use to operate the charge and discharge switches (these work without sending password):
+
+Turn on charging switch
+0x4E, 0x57, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0x02, 0xab, 0x01, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0xd4
+
+Turn off charging switch
+0x4E, 0x57, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0x02, 0xab, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0xd3
+
+Turn on discharging switch
+0x4E, 0x57, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0x02, 0xac, 0x01, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0xd5
+
+Turn off discharging switch
+0x4E, 0x57, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0x02, 0xac, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x00, 0x01, 0xd4
+Like
+Reactions:
+
+=============================
+I heard back from JiKong and one of their Alibaba sales partners — 
+apparently the write function was disabled at least in the current 
+revision of the BMS they sell such as the B2A8S20P and writing parameters 
+via rhe GPS port is currently not possible. The information in the protocol 
+spec is apparently outdated from an older version of the BMS. As @pacman 
+noted the charge/discharge mos can be controlled via GPS/TTL but no other 
+parameters can be set. The sales reps I emailed cited battery safety as 
+the reason for this change, not wanting a user to make a change that 
+might put the pack at risk. This reasoning is a bit dubious to me because 
+I can set wonky settings via the bluetooth app too, so what’s the 
+difference if I write those via GPS?
+
+I tried contacting @Nami who I believe is an owner or general 
+manager for JiKong but could not get a response. 
+Hopefully he can provide some insight here on whether 
+the write function can actually be accessed or not when he has time.
+
+
+=============================================
+bool JK_BMS_UART::changeChargeMos(bool mosstatus) {
+    debug_info("start change charge mosfet");
+    memset(this->my_txBuffer, 0, TX_BUFFER_LENGTH);
+
+    // prepare the buffer
+    // starter
+    this->my_txBuffer[0] = 0x4E;
+    this->my_txBuffer[1] = 0x57;
+    // total length
+    this->my_txBuffer[2] = 0x00;
+    this->my_txBuffer[3] = 0x14;
+    // terminal number (set to all zero, somehow, idk why)
+    this->my_txBuffer[4] = 0x00;
+    this->my_txBuffer[5] = 0x00;
+    this->my_txBuffer[6] = 0x00;
+    this->my_txBuffer[7] = 0x00;
+    // message type (BMS actively report)
+    this->my_txBuffer[8] = 0x02;
+    // message source (PC)
+    this->my_txBuffer[9] = 0x03;
+    // message type (write)
+    this->my_txBuffer[10] = 0x02;
+    // register address and data
+    this->my_txBuffer[11] = 0xab;
+    this->my_txBuffer[12] = mosstatus ? 0x01 : 0x00;
+    // record number (all zero, somehow, idk why)
+    this->my_txBuffer[13] = 0x00;
+    this->my_txBuffer[14] = 0x00;
+    this->my_txBuffer[15] = 0x00;
+    this->my_txBuffer[16] = 0x00;
+    // end seq
+    this->my_txBuffer[17] = 0x68;
+    // checksum, we can calc this by hand, save some time;
+    this->my_txBuffer[18] = 0x00;
+    this->my_txBuffer[19] = 0x00;
+    auto checksum = calculateChecksum(my_txBuffer, 20);
+    this->my_txBuffer[20] = checksum >> 8;
+    this->my_txBuffer[21] = checksum;
+
+    this->my_serialIntf->flush();
+
+    this->my_serialIntf->write(this->my_txBuffer, 22);
+
+    this->my_serialIntf->readBytes(this->my_rxBuffer, 21);
+    // for (int i = 0; i < 21; i++)
+    //     debug_infof("Byte [%d] is: %x", i, this->my_rxBuffer[i]);
+    bool res = validateChecksum(21);
+    if (res)
+        debug_infof("Succ Change Charge Mosfet to: %d\n", mosstatus);
+    else
+        debug_info("Response from BMS for changing charge mosfet somehow doesn't match checksum\n");
+    return res;
+}
+
+bool JK_BMS_UART::changeDischargeMos(bool mosstatus) {
+    debug_info("start change charge mosfet");
+    memset(this->my_txBuffer, 0, TX_BUFFER_LENGTH);
+
+    // prepare the buffer
+    // starter
+    this->my_txBuffer[0] = 0x4E;
+    this->my_txBuffer[1] = 0x57;
+    // total length
+    this->my_txBuffer[2] = 0x00;
+    this->my_txBuffer[3] = 0x14;
+    // terminal number (set to all zero, somehow, idk why)
+    this->my_txBuffer[4] = 0x00;
+    this->my_txBuffer[5] = 0x00;
+    this->my_txBuffer[6] = 0x00;
+    this->my_txBuffer[7] = 0x00;
+    // message type (BMS actively report)
+    this->my_txBuffer[8] = 0x02;
+    // message source (PC)
+    this->my_txBuffer[9] = 0x03;
+    // message type (write)
+    this->my_txBuffer[10] = 0x02;
+    // register address and data
+    this->my_txBuffer[11] = 0xac;
+    this->my_txBuffer[12] = mosstatus ? 0x01 : 0x00;
+    // record number (all zero, somehow, idk why)
+    this->my_txBuffer[13] = 0x00;
+    this->my_txBuffer[14] = 0x00;
+    this->my_txBuffer[15] = 0x00;
+    this->my_txBuffer[16] = 0x00;
+    // end seq
+    this->my_txBuffer[17] = 0x68;
+    // checksum, or we can calc this by hand, to save some time;
+    this->my_txBuffer[18] = 0x00;
+    this->my_txBuffer[19] = 0x00;
+    auto checksum = calculateChecksum(my_txBuffer, 20);
+    this->my_txBuffer[20] = checksum >> 8;
+    this->my_txBuffer[21] = checksum;
+
+    this->my_serialIntf->flush();
+
+    this->my_serialIntf->write(this->my_txBuffer, 22);
+
+    this->my_serialIntf->readBytes(this->my_rxBuffer, 21);
+    // for (int i = 0; i < 21; i++)
+    //     debug_infof("Byte [%d] is: %x", i, this->my_rxBuffer[i]);
+    bool res = validateChecksum(21);
+    if (res)
+        debug_infof("Succ Change Discharge Mosfet to: %d\n", mosstatus);
+    else
+        debug_info("Response from BMS for changing discharge mosfet somehow doesn't match checksum\n");
+    return res;
+}
+
+I've written the comment, so you can see which value corresponds to which field. Hope this would be helpful~

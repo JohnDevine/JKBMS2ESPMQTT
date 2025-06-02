@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.mmd": "markdown"
+    },
+    "workbench.editorAssociations": {
+        "*.pdf": "pdfViewer.PDFEdit"
+    }
+}

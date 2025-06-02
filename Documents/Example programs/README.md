@@ -1,0 +1,2 @@
+<!-- filepath: /Volumes/Work01/Developer/ESP32Projects/JKBMS2ESPMQTT/Documents/Example programs/README.md -->
+These are two example programs from https://github.com/PurpleAlien/jk-bms_grafana/blob/main/data_bms.py

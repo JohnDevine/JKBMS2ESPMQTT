@@ -1,0 +1,534 @@
+// Standard C input/output library
+#include <stdio.h>
+// FreeRTOS real-time operating system definitions
+#include "freertos/FreeRTOS.h"
+// FreeRTOS task management
+#include "freertos/task.h"
+// ESP32 UART driver
+#include "driver/uart.h"
+// ESP32 GPIO driver
+#include "driver/gpio.h"
+// ESP-IDF logging library
+#include "esp_log.h"
+// Standard C string manipulation library (for memcmp)
+#include <string.h> 
+
+// Define the UART peripheral number to be used (UART2 in this case)
+#define UART_NUM UART_NUM_2
+// Define the GPIO pin for UART Transmit (TX)
+#define UART_TX_PIN GPIO_NUM_17
+// Define the GPIO pin for UART Receive (RX)
+#define UART_RX_PIN GPIO_NUM_16
+// Define the size of the UART buffer for receiving data
+#define UART_BUF_SIZE 1024
+
+// Tag used for logging messages from this module
+static const char *TAG = "BMS_READER";
+
+// Forward declarations for functions defined later in this file
+// Initializes the UART communication peripheral.
+void init_uart();
+// Sends a command to the BMS via UART.
+void send_bms_command(const uint8_t* cmd, size_t len);
+// Reads data from the BMS via UART. This function is static, meaning it's only visible within this file.
+static void read_bms_data(); 
+// Parses the raw data received from the BMS and prints it in a human-readable format.
+void parse_and_print_bms_data(const uint8_t *data, int len);
+
+// Constant array holding the "Read All Data" command bytes to be sent to the JK BMS.
+// This command requests a comprehensive status update from the BMS.
+const uint8_t bms_read_all_cmd[] = {
+    0x4E, 0x57, // Start Frame
+    0x00, 0x13, // Length (2 bytes, value 19: from this byte to end of checksum)
+    0x00, 0x00, 0x00, 0x00, // Terminal Number (4 bytes, typically 0)
+    0x06,       // Command Word (0x06 for "Read All Data")
+    0x03,       // Frame Source (e.g., 0x03 for host computer)
+    0x00, 0x00, // Data: Cell number (start) - 0x0000 for all cells
+    0x00, 0x00, // Data: Cell number (end) - 0x0000 for all cells
+    0x00, 0x00, // Reserved
+    0x68,       // End ID
+    0x00, 0x00, // Checksum (placeholder, actual CRC is calculated over previous bytes)
+    0x01, 0x29  // Checksum (CRC16 of bytes from Start Frame up to End ID)
+                // 0x0129 = 297. Sum of (4E+57+00+13+00+00+00+00+06+03+00+00+00+00+00+00+68) = 297
+};
+
+// Helper function to extract a 16-bit unsigned integer from a buffer.
+// Assumes big-endian byte order (most significant byte first).
+// buffer: Pointer to the byte array.
+// offset: Starting index in the buffer from where to read the 16-bit integer.
+// Returns the extracted 16-bit unsigned integer.
+uint16_t unpack_u16_be(const uint8_t *buffer, int offset) {
+    // Combine two consecutive bytes into a 16-bit value.
+    // buffer[offset] is the most significant byte, buffer[offset+1] is the least significant.
+    return ((uint16_t)buffer[offset] << 8) | buffer[offset + 1];
+}
+
+// Helper function to extract an 8-bit unsigned integer (a single byte) from a buffer.
+// buffer: Pointer to the byte array.
+// offset: Index in the buffer from where to read the 8-bit integer.
+// Returns the extracted 8-bit unsigned integer.
+uint8_t unpack_u8(const uint8_t *buffer, int offset) {
+    // Directly return the byte at the specified offset.
+    return buffer[offset];
+}
+
+// Initializes the UART peripheral for communication with the BMS.
+void init_uart() {
+    // UART configuration structure
+    uart_config_t uart_config = {
+        .baud_rate = 115200,                // Baud rate for serial communication
+        .data_bits = UART_DATA_8_BITS,      // 8 data bits per frame
+        .parity    = UART_PARITY_DISABLE,   // No parity bit
+        .stop_bits = UART_STOP_BITS_1,      // 1 stop bit
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, // No hardware flow control
+        .source_clk = UART_SCLK_APB,        // Clock source for UART (APB clock)
+    };
+    // Install UART driver, and get the queue.
+    // UART_NUM: UART port number
+    // UART_BUF_SIZE * 2: RX buffer size (doubled for safety)
+    // 0: TX buffer size (0 means driver will not allocate TX buffer, direct write)
+    // 0, NULL: No event queue
+    // 0: Interrupt allocation flags
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM, UART_BUF_SIZE * 2, 0, 0, NULL, 0));
+    // Configure UART parameters
+    ESP_ERROR_CHECK(uart_param_config(UART_NUM, &uart_config));
+    // Set UART pins for TX, RX, RTS, CTS
+    // UART_TX_PIN: TX pin number
+    // UART_RX_PIN: RX pin number
+    // UART_PIN_NO_CHANGE: RTS pin (not used)
+    // UART_PIN_NO_CHANGE: CTS pin (not used)
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_LOGI(TAG, "UART initialized");
+}
+
+// Sends a command (array of bytes) to the BMS via UART.
+// cmd: Pointer to the byte array containing the command.
+// len: Length of the command in bytes.
+void send_bms_command(const uint8_t* cmd, size_t len) {
+    // Write data to UART.
+    // (const char*)cmd: Cast command buffer to char pointer as expected by the function.
+    int txBytes = uart_write_bytes(UART_NUM, (const char*)cmd, len);
+    ESP_LOGI(TAG, "Wrote %d bytes", txBytes); // Log the number of bytes written.
+}
+
+// Parses the raw data received from the BMS and prints it.
+// data: Pointer to the buffer containing the raw data from BMS.
+// len: Length of the data in bytes.
+void parse_and_print_bms_data(const uint8_t *data, int len) {
+    // Detailed frame format based on JK BMS RS485 Protocol documentation and Python examples:
+    // Offset | Length | Description
+    // -------|--------|----------------------------------------------------
+    // 0      | 2      | Start Frame (Fixed: 0x4E, 0x57)
+    // 2      | 2      | Length (Big-endian, from this field to end of CRC)
+    // 4      | 4      | Terminal Number (Usually 0x00000000)
+    // 8      | 1      | Command Word (e.g., 0x00 for response to read all)
+    // 9      | 1      | Frame Source (e.g., 0x00 for BMS)
+    // 10     | 1      | Transmission Type (e.g., 0x00 for normal data)
+    // 11     | N      | Frame Info / Data Payload (Actual BMS data, variable length)
+    // 11+N   | 4      | Record Number (Usually 0x00000000, can be part of some frames)
+    // 11+N+4 | 1      | End ID (Fixed: 0x68)
+    // 11+N+5 | 4      | Checksum (CRC, last 2 bytes are the sum, first 2 are 0x0000)
+    // Total length = 2 (Start) + Length_Field_Value
+
+    // Minimum length check for a valid frame.
+    // Smallest possible payload could be just a few bytes.
+    // Header (2) + Length (2) + Terminal (4) + Cmd (1) + Src (1) + Type (1) = 11 bytes
+    // Trailer: RecordNum (4, optional but often present) + EndID (1) + Checksum (4) = 9 bytes
+    // So, 11 (header) + min_payload (e.g. 1 byte for simple ack) + 9 (trailer) approx.
+    // The python script implies payload starts at 11 and ends at process_len - 9 (excluding RecNum, EndID, CRC).
+    // Minimum frame with 0 payload data: 2(start)+2(len_val)+4(term)+1(cmd)+1(src)+1(type) + 4(rec_num)+1(end_id)+4(crc) = 19 bytes.
+    // The length field itself is part of this.
+    // If frame_len_field is minimal (e.g. for header + trailer only, no payload), it would be 4+1+1+1+4+1+4 = 15.
+    if (len < 15) { 
+        ESP_LOGW(TAG, "Frame too short for basic structure: %d bytes", len);
+        return;
+    }
+
+    // 1. Check Start Frame (must be 0x4E, 0x57)
+    if (data[0] != 0x4E || data[1] != 0x57) {
+        ESP_LOGW(TAG, "Invalid start frame: %02X %02X", data[0], data[1]);
+        return;
+    }
+    ESP_LOGI(TAG, "Start frame OK");
+
+    // 2. Get Length field from the frame.
+    // This length is from the length field itself to the end of the checksum.
+    uint16_t frame_len_field = unpack_u16_be(data, 2); 
+    ESP_LOGI(TAG, "Frame length field value: %d", frame_len_field);
+
+    // Validate if the received data length (`len`) is sufficient for the declared frame length.
+    // Total expected length = 2 (Start Frame bytes) + frame_len_field.
+    if (len < (frame_len_field + 2)) { 
+        ESP_LOGW(TAG, "Incomplete frame. Expected header(2) + frame_len_field(%d) = %d bytes, but got %d bytes in total.", 
+                 frame_len_field, frame_len_field + 2, len);
+        return;
+    }
+    // Determine the length of the frame to process.
+    // This is either the declared total length or the received length, whichever is smaller (to prevent overruns).
+    // However, the previous check should ensure `len` is at least `declared_total_len`.
+    int declared_total_len = 2 + frame_len_field; 
+    int process_len = (declared_total_len < len) ? declared_total_len : len;
+
+
+    // 3. Calculate and Verify CRC (Checksum)
+    // The JK BMS uses a simple sum CRC.
+    // The CRC is calculated over the bytes from the Start Frame (0x4E) up to, but not including,
+    // the 4-byte checksum field itself.
+    // The actual 16-bit CRC sum is stored in the last 2 bytes of this 4-byte field.
+    // (The first 2 bytes of the checksum field are often 0x0000).
+
+    // Minimum length for CRC calculation: Header (11 bytes) + Trailer before CRC (RecNum(4) + EndID(1) = 5 bytes) + CRC (4 bytes) = 20 bytes.
+    // So, process_len must be at least 20 for a valid payload structure and CRC.
+    // If process_len is less than 4, we can't even read the CRC.
+    if (process_len < 4) {
+        ESP_LOGW(TAG, "Frame too short to contain CRC: %d bytes", process_len);
+        return;
+    }
+    // The python script sums `data[0:-4]`, meaning all bytes except the last four.
+    // So, we sum `process_len - 4` bytes.
+    uint32_t crc_calc = 0; // Use uint32_t for sum to avoid overflow before casting to uint16_t.
+    for (int i = 0; i < process_len - 4; i++) {
+        crc_calc += data[i];
+    }
+
+    // Extract the 16-bit CRC value received in the frame.
+    // It's located in the last 2 bytes of the 4-byte checksum field (i.e., at offset process_len - 2).
+    uint16_t crc_received = unpack_u16_be(data, process_len - 2);
+
+    ESP_LOGI(TAG, "Calculated CRC sum (16-bit): %u (0x%04X)", (uint16_t)crc_calc, (uint16_t)crc_calc);
+    ESP_LOGI(TAG, "Received CRC from frame: %u (0x%04X)", crc_received, crc_received);
+
+    // Compare calculated CRC with received CRC.
+    if ((uint16_t)crc_calc != crc_received) {
+        ESP_LOGE(TAG, "CRC mismatch! Calculated: 0x%04X, Received: 0x%04X. Frame might be corrupt.", 
+                 (uint16_t)crc_calc, crc_received);
+        // return; // Optionally, uncomment to discard frames with bad CRC. For debugging, we might proceed.
+    } else {
+        ESP_LOGI(TAG, "CRC OK");
+    }
+
+    // 4. Extract Data Payload (Frame Info section)
+    // The payload starts after the initial header fields:
+    // Start Frame (2) + Length (2) + Terminal Number (4) + Command Word (1) + Frame Source (1) + Transmission Type (1) = 11 bytes.
+    // The payload ends before the trailer fields:
+    // Record Number (4) + End ID (1) + Checksum (4) = 9 bytes.
+    // So, payload_len = process_len - (offset_of_payload) - (length_of_trailer)
+    // payload_len = process_len - 11 - 9 = process_len - 20.
+
+    // Check if frame is long enough to contain any payload.
+    if (process_len < 20) { // 11 (header) + 9 (trailer) = 20. If less, no payload.
+        ESP_LOGW(TAG, "Frame too short for data payload (less than 20 bytes): %d", process_len);
+        return;
+    }
+    // Pointer to the start of the payload.
+    const uint8_t *payload = &data[11];
+    // Calculate the length of the payload.
+    int payload_len = process_len - 20; 
+    
+    ESP_LOGI(TAG, "Payload length: %d bytes", payload_len);
+    if (payload_len <= 0) {
+        ESP_LOGW(TAG, "No actual payload data (payload_len <= 0).");
+        // If CRC was OK, this might be an ack or a frame with no data content.
+        // Depending on the command sent, this might be expected.
+        return; 
+    }
+    // Log the hexadecimal representation of the payload for debugging.
+    ESP_LOGI(TAG, "Payload HEX:");
+    ESP_LOG_BUFFER_HEX(TAG, payload, payload_len);
+
+
+    // 5. Parse specific data fields from the payload.
+    // This parsing is based on the "Read All Data" (0x06) command response structure.
+    // The first byte of the payload for this response is typically 0x79 (Cell Voltages ID).
+
+    // Guard against empty payload before accessing payload[0].
+    if (payload_len == 0) { 
+        ESP_LOGW(TAG, "Payload is empty, cannot parse specific fields.");
+        return;
+    }
+    // Check if payload starts with the expected Cell Voltages ID (0x79).
+    if (payload[0] != 0x79) {
+        ESP_LOGW(TAG, "Payload does not start with 0x79 (Cell Voltages ID), instead: 0x%02X. Parsing may be incorrect for this response.", payload[0]);
+        // Depending on the actual command/response, this might not be an error.
+        // For "Read All Data", 0x79 is expected.
+        // return; // Optionally stop if the structure is not as expected.
+    }
+
+    // 5.1 Parse Cell Voltages (ID 0x79)
+    // Structure: 0x79 (ID) | ByteCount (1 byte) | Cell1_Hi | Cell1_Lo | Cell1_Info | Cell2_Hi | ...
+    // Python: bytecount = data[1] (relative to payload start)
+    // Python: cellcount = int(bytecount/3)
+    // Python: Voltages start at payload[2], each voltage uses 3 bytes.
+    //         The actual mV value is in the last 2 bytes of these 3 (skip 1, read 2 as u16_be).
+
+    if (payload_len < 2) { // Need at least ID (already checked) and ByteCount.
+        ESP_LOGW(TAG, "Payload too short for cell voltage byte count (needs at least 2 bytes).");
+        return;
+    }
+    uint8_t cell_voltage_bytecount = payload[1]; // Number of bytes used for all cell voltage data.
+    int num_cells = cell_voltage_bytecount / 3;  // Each cell's data is 3 bytes long.
+    ESP_LOGI(TAG, "Cell voltage data byte count from payload: %d, Calculated number of cells: %d", cell_voltage_bytecount, num_cells);
+
+    // Check if payload is long enough for all declared cell voltages.
+    // Expected length = 2 (ID + ByteCount) + cell_voltage_bytecount.
+    if (payload_len < (2 + cell_voltage_bytecount)) {
+        ESP_LOGW(TAG, "Payload too short for all cell voltages. Expected %d bytes for cell data part, got %d bytes in payload.", 
+                 (2 + cell_voltage_bytecount), payload_len);
+        // We might still try to parse what's available if num_cells > 0 and data seems partially there.
+        // For now, return if data is clearly insufficient.
+        return;
+    }
+
+    printf("Cell Voltages (V):\\n");
+    float min_cell_voltage = 5.0f; // Initialize with a high value to find the minimum.
+    float max_cell_voltage = 0.0f; // Initialize with a low value to find the maximum.
+
+    for (int i = 0; i < num_cells; i++) {
+        // Offset for current cell's data within payload: 2 (ID+ByteCount) + i * 3 (3 bytes per cell).
+        // Voltage is in bytes 2 and 3 of these 3 bytes (i.e., skip the first byte of the 3-byte group).
+        // So, offset for mV value is payload_start + 2 + i*3 + 1.
+        int cell_data_start_offset = 2 + i * 3;
+        if ( (cell_data_start_offset + 2) < payload_len) { // Check bounds: need 3 bytes for cell i, last is at offset+2
+             uint16_t voltage_mv = unpack_u16_be(payload, cell_data_start_offset + 1); 
+             float voltage_v = voltage_mv / 1000.0f; // Convert mV to V.
+             printf("  Cell %2d: %.3f V\\n", i + 1, voltage_v);
+             // Update min/max cell voltages, ensuring voltage_mv > 0 to avoid uninitialized cells if BMS reports them as 0.
+             if (voltage_mv > 0 && voltage_v < min_cell_voltage) min_cell_voltage = voltage_v;
+             if (voltage_v > max_cell_voltage) max_cell_voltage = voltage_v;
+        } else {
+            ESP_LOGW(TAG, "Not enough data in payload for cell %d voltage. Stopping cell voltage parsing.", i + 1);
+            break; // Stop if data runs out.
+        }
+    }
+    // Print Min, Max, and Delta cell voltages if cells were processed.
+    if (num_cells > 0) {
+        if (min_cell_voltage > 4.9f) min_cell_voltage = 0.0f; // If min_cell_voltage wasn't updated, set to 0.
+        printf("Min Cell Voltage: %.3f V\\n", min_cell_voltage);
+        printf("Max Cell Voltage: %.3f V\\n", max_cell_voltage);
+        printf("Cell Voltage Delta: %.3f V\\n", max_cell_voltage - min_cell_voltage);
+    }
+    
+    // current_offset tracks the position in the payload after the last parsed field.
+    // Initialized to after the cell voltage block: ID (1) + ByteCount (1) + cell_voltage_bytecount.
+    int current_offset = 2 + cell_voltage_bytecount;
+
+    // 5.2 Parse Temperatures (IDs 0x80, 0x81, 0x82)
+    // Each temperature field: ID (1 byte) + Temperature Data (2 bytes, u16_be).
+    // Temperature conversion: If raw > 100, it's negative: -(raw - 100). Otherwise, it's raw. (As per Python example)
+    // Protocol doc might say value/10 for degrees C, with 1000 offset for negative. (e.g. 900 = -10C, 1100 = 10C)
+    // Sticking to Python example's simpler (raw > 100 ? -(raw-100) : raw) logic for now.
+
+    // MOSFET Temperature (ID 0x80)
+    if (payload_len > current_offset + 2 && payload[current_offset] == 0x80) { // Check ID and enough data (ID + 2 bytes)
+        uint16_t temp_fet_raw = unpack_u16_be(payload, current_offset + 1);
+        float temp_fet = (temp_fet_raw > 100) ? -(float)(temp_fet_raw - 100) : (float)temp_fet_raw;
+        printf("MOSFET Temperature: %.1f C (raw: %u)\\n", temp_fet, temp_fet_raw);
+        current_offset += 3; // Advance offset by ID (1) + Data (2).
+    } else {
+        ESP_LOGW(TAG, "MOSFET Temp (ID 0x80) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
+                 current_offset, payload_len > current_offset ? payload[current_offset] : 0xFF);
+    }
+
+    // Probe 1 Temperature (ID 0x81)
+    if (payload_len > current_offset + 2 && payload[current_offset] == 0x81) {
+        uint16_t temp_1_raw = unpack_u16_be(payload, current_offset + 1);
+        float temp_1 = (temp_1_raw > 100) ? -(float)(temp_1_raw - 100) : (float)temp_1_raw;
+        printf("Probe 1 Temperature: %.1f C (raw: %u)\\n", temp_1, temp_1_raw);
+        current_offset += 3;
+    } else {
+        ESP_LOGW(TAG, "Probe 1 Temp (ID 0x81) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
+                 current_offset, payload_len > current_offset ? payload[current_offset] : 0xFF);
+    }
+
+    // Probe 2 Temperature (ID 0x82)
+    if (payload_len > current_offset + 2 && payload[current_offset] == 0x82) {
+        uint16_t temp_2_raw = unpack_u16_be(payload, current_offset + 1);
+        float temp_2 = (temp_2_raw > 100) ? -(float)(temp_2_raw - 100) : (float)temp_2_raw;
+        printf("Probe 2 Temperature: %.1f C (raw: %u)\\n", temp_2, temp_2_raw);
+        current_offset += 3;
+    } else {
+        ESP_LOGW(TAG, "Probe 2 Temp (ID 0x82) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
+                 current_offset, payload_len > current_offset ? payload[current_offset] : 0xFF);
+    }
+    
+    // 5.3 Parse Total Battery Voltage (ID 0x83)
+    // Structure: ID (1 byte) + Total Voltage Data (2 bytes, u16_be, value in 0.01V).
+    if (payload_len > current_offset + 2 && payload[current_offset] == 0x83) {
+        uint16_t total_voltage_raw = unpack_u16_be(payload, current_offset + 1); 
+        printf("Total Battery Voltage: %.2f V (raw: %u)\\n", total_voltage_raw / 100.0f, total_voltage_raw);
+        current_offset += 3;
+    } else {
+        ESP_LOGW(TAG, "Total Voltage (ID 0x83) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
+                 current_offset, payload_len > current_offset ? payload[current_offset] : 0xFF);
+    }
+
+    // 5.4 Parse Current (ID 0x84)
+    // Structure: ID (1 byte) + Current Data (2 bytes, u16_be).
+    // Current interpretation varies based on `frame_len_field` as per `data_bms_full.py`.
+    // Value is in 0.01A.
+    if (payload_len > current_offset + 2 && payload[current_offset] == 0x84) {
+        uint16_t current_raw = unpack_u16_be(payload, current_offset + 1);
+        float current_a;
+
+        ESP_LOGI(TAG, "Current parsing: frame_len_field=%u, current_raw=0x%04X (%u)", 
+                 frame_len_field, current_raw, current_raw);
+
+        // Logic from data_bms_full.py:
+        // `frame_len_field` is the length from the BMS packet (from length field itself to end of CRC).
+        if (frame_len_field < 260) { 
+            // Method 1: (10000 - raw_value) * 0.01. This implies 10000 is zero current.
+            // e.g. raw=10000 -> 0A. raw=9900 -> 1A. raw=10100 -> -1A.
+            current_a = (float)(10000 - (int32_t)current_raw) * 0.01f;
+            ESP_LOGI(TAG, "Current (method 1, frame_len_field < 260): %.2f A", current_a);
+        } else {
+            // Method 2: MSB indicates sign.
+            // Python: if (value & 0x8000) == 0x8000 : current = (value & 0x7FFF)/100
+            //         else : current = ((value & 0x7FFF)/100) * -1
+            // This means if MSB is set, it's positive current (value & 0x7FFF).
+            // If MSB is clear, it's negative current -(value & 0x7FFF).
+            // Note: This is different from standard two's complement.
+            if ((current_raw & 0x8000) == 0x8000) { 
+                current_a = (float)(current_raw & 0x7FFF) / 100.0f;
+            } else { 
+                current_a = -((float)(current_raw & 0x7FFF) / 100.0f);
+            }
+            ESP_LOGI(TAG, "Current (method 2, frame_len_field >= 260): %.2f A", current_a);
+        }
+
+        printf("Current: %.2f A (raw: %u)\\n", current_a, current_raw);
+        current_offset += 3;
+    } else {
+        ESP_LOGW(TAG, "Current (ID 0x84) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
+                 current_offset, payload_len > current_offset ? payload[current_offset] : 0xFF);
+    }
+
+    // 5.5 Parse Remaining Capacity (SOC) (ID 0x85)
+    // Structure: ID (1 byte) + SOC Data (1 byte, percentage).
+    if (payload_len > current_offset + 1 && payload[current_offset] == 0x85) { // Need ID + 1 byte data.
+        uint8_t soc_percent = unpack_u8(payload, current_offset + 1);
+        printf("Remaining Capacity (SOC): %u%%\\n", soc_percent);
+        current_offset += 2; // Advance by ID(1) + Data(1).
+    } else {
+        ESP_LOGW(TAG, "SOC (ID 0x85) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
+                 current_offset, payload_len > current_offset ? payload[current_offset] : 0xFF);
+    }
+    
+    // Further data fields can be parsed here by adding more blocks similar to the above,
+    // checking for their respective IDs (e.g., 0x86, 0x87, 0x89, etc.) and data lengths.
+    // Example: Cycle count (0x87), Warnings (0x8B), etc.
+
+    printf("----------------------------------------\\n"); // Separator for console output.
+}
+
+
+// Reads data from the BMS. This function handles potential UART echo and then parses the response.
+static void read_bms_data() {
+    uint8_t data_buf[UART_BUF_SIZE]; // Buffer to store raw data from UART.
+    int length = 0; // Variable to store the length of data available in UART RX buffer.
+
+    ESP_LOGI(TAG, "Attempting to read BMS data...");
+    // Wait for a period to allow the BMS to respond.
+    // JK BMS response time is typically <100ms for "Read All Data".
+    // A 300ms delay provides a safety margin.
+    vTaskDelay(pdMS_TO_TICKS(300)); 
+
+    // Get the number of bytes available in the UART RX buffer.
+    ESP_ERROR_CHECK(uart_get_buffered_data_len(UART_NUM, (size_t*)&length));
+    
+    if (length > 0) { // If data is available
+        ESP_LOGI(TAG, "%d bytes available in UART buffer.", length);
+        if (length > UART_BUF_SIZE) {
+            ESP_LOGW(TAG, "Incoming data (%d bytes) larger than local buffer (%d bytes). Truncating.", length, UART_BUF_SIZE);
+            length = UART_BUF_SIZE; // Limit read to buffer size to prevent overflow.
+        }
+        
+        // Read the data from UART RX buffer into data_buf.
+        // pdMS_TO_TICKS(200): Timeout for the read operation.
+        int read_len = uart_read_bytes(UART_NUM, data_buf, length, pdMS_TO_TICKS(200)); 
+        
+        if (read_len > 0) {
+            ESP_LOGI(TAG, "Successfully read %d bytes from UART:", read_len);
+            ESP_LOG_BUFFER_HEX(TAG, data_buf, read_len); // Log the raw received data in hex.
+
+            uint8_t* data_to_parse = data_buf; // Pointer to the start of data to be parsed.
+            int len_to_parse = read_len;       // Length of data to be parsed.
+
+            // Check if the received data starts with the command that was sent (UART echo).
+            // This can happen if TX and RX lines are connected in a way that allows echo.
+            if (len_to_parse >= sizeof(bms_read_all_cmd) &&
+                memcmp(data_to_parse, bms_read_all_cmd, sizeof(bms_read_all_cmd)) == 0) {
+                ESP_LOGI(TAG, "Command echo detected at the beginning of the read buffer. Skipping %d echo bytes.", (int)sizeof(bms_read_all_cmd));
+                // Advance the pointer and reduce the length to skip the echo.
+                data_to_parse += sizeof(bms_read_all_cmd);
+                len_to_parse -= sizeof(bms_read_all_cmd);
+
+                if (len_to_parse <= 0) {
+                    ESP_LOGW(TAG, "Buffer contained only echo, no further data for BMS response.");
+                    // uart_flush_input(UART_NUM); // Flush, though it will be flushed later anyway.
+                    return; // No actual BMS response data left.
+                }
+                ESP_LOGI(TAG, "Processing remaining %d bytes for BMS response:", len_to_parse);
+                ESP_LOG_BUFFER_HEX(TAG, data_to_parse, len_to_parse); // Log the data after skipping echo.
+            }
+
+            // If there's still data left after potential echo removal, parse it.
+            if (len_to_parse > 0) { 
+                parse_and_print_bms_data(data_to_parse, len_to_parse);
+            } else {
+                ESP_LOGW(TAG, "No data left to parse after potential echo removal.");
+            }
+
+        } else { // uart_read_bytes returned 0 or error.
+            ESP_LOGW(TAG, "Failed to read data from UART buffer after length check (uart_read_bytes returned %d).", read_len);
+        }
+        // Flush the UART RX buffer to remove any remaining or old data.
+        // This is important to prevent interference with the next read cycle.
+        uart_flush_input(UART_NUM);
+        ESP_LOGI(TAG, "UART RX buffer flushed.");
+    } else { // No data available in UART buffer after the initial wait.
+        ESP_LOGW(TAG, "No data available from BMS after %dms wait.", 300);
+    }
+}
+
+// Main application entry point.
+void app_main(void) {
+    // Initialize UART communication.
+    init_uart();
+    
+    // Buffer to attempt to read and discard UART echo. Size of the command sent.
+    uint8_t echo_buf[sizeof(bms_read_all_cmd)]; 
+
+    // Main loop to periodically send command and read response from BMS.
+    while (1) {
+        ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
+        // Send the pre-defined "Read All Data" command to the BMS.
+        send_bms_command(bms_read_all_cmd, sizeof(bms_read_all_cmd));
+        
+        // Attempt to read and discard the UART echo immediately after sending.
+        // The command is 21 bytes. At 115200 baud, transmission time is ~1.82ms.
+        // Echo should appear very shortly after transmission completes.
+        // A short timeout (e.g., 20ms) for uart_read_bytes should be sufficient for echo.
+        ESP_LOGI(TAG, "Attempting to read and discard echo (%d bytes) with 20ms timeout...", (int)sizeof(bms_read_all_cmd));
+        // Try to read exactly the number of bytes sent (the echo).
+        int echo_read_len = uart_read_bytes(UART_NUM, echo_buf, sizeof(bms_read_all_cmd), pdMS_TO_TICKS(20));
+
+        if (echo_read_len == sizeof(bms_read_all_cmd)) {
+            ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
+            // ESP_LOG_BUFFER_HEX(TAG, echo_buf, echo_read_len); // Optional: log the echo if needed for debugging.
+        } else if (echo_read_len > 0) {
+            ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", 
+                     echo_read_len, (int)sizeof(bms_read_all_cmd));
+        } else { // echo_read_len <= 0 (0 means timeout, -1 means error from uart_read_bytes)
+            ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
+        }
+        // Even if this dedicated echo read fails or is partial, the `read_bms_data` function
+        // has its own logic to detect and skip leading echo bytes in the main data buffer.
+
+        // Call the function to read and process the actual BMS response.
+        read_bms_data(); 
+        
+        // Wait for 5 seconds before sending the command again.
+        ESP_LOGI(TAG, "Waiting 5 seconds before next BMS read cycle...");
+        vTaskDelay(pdMS_TO_TICKS(5000)); 
+    }
+}
