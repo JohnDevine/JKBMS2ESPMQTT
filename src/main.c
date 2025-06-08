@@ -13,6 +13,15 @@
 // Standard C string manipulation library (for memcmp)
 #include <string.h> 
 
+// Added for Wi-Fi and MQTT
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "nvs_flash.h"
+#include "lwip/err.h"
+#include "lwip/sys.h"
+#include "mqtt_client.h"
+#include "cJSON.h" // For JSON formatting
+
 // Define the UART peripheral number to be used (UART2 in this case)
 #define UART_NUM UART_NUM_2
 // Define the GPIO pin for UART Transmit (TX)
@@ -25,6 +34,44 @@
 // Tag used for logging messages from this module
 static const char *TAG = "BMS_READER";
 
+// Wi-Fi Configuration
+#define EXAMPLE_ESP_WIFI_SSID      "BAANFARANG_O"
+#define EXAMPLE_ESP_WIFI_PASS      "tAssy@#28"
+#define EXAMPLE_ESP_MAXIMUM_RETRY  5
+
+// MQTT Configuration
+#define MQTT_BROKER_URL "mqtt://192.168.1.5"
+#define MQTT_TOPIC_PACK "NodeJKBMS2/pack"
+#define MQTT_TOPIC_CELLS "NodeJKBMS2/cells"
+
+// Global variable for MQTT client
+static esp_mqtt_client_handle_t mqtt_client;
+static int wifi_retry_num = 0;
+
+// Placeholder structures for BMS data
+// This will be populated with more fields later
+typedef struct {
+    float pack_voltage;
+    float pack_current;
+    uint8_t soc_percent;
+    // Cell voltages will be handled separately or in an array here
+    float cell_voltages[24]; // Assuming max 24 cells for now
+    int num_cells;
+    float min_cell_voltage;
+    float max_cell_voltage;
+    float cell_voltage_delta;
+    float mosfet_temp;
+    float probe1_temp;
+    float probe2_temp;
+    // Add other fields from your target JSON here as they are parsed
+    // e.g., uint16_t pack_rate_cap;
+    // ...
+} bms_data_t;
+
+// Global instance of BMS data
+static bms_data_t current_bms_data;
+
+
 // Forward declarations for functions defined later in this file
 // Initializes the UART communication peripheral.
 void init_uart();
@@ -34,6 +81,15 @@ void send_bms_command(const uint8_t* cmd, size_t len);
 static void read_bms_data(); 
 // Parses the raw data received from the BMS and prints it in a human-readable format.
 void parse_and_print_bms_data(const uint8_t *data, int len);
+
+// New forward declarations for Wi-Fi and MQTT
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                                int32_t event_id, void* event_data);
+static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data);
+void wifi_init_sta(void);
+static void mqtt_app_start(void);
+void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr); // Combined publish function for now
 
 // Constant array holding the "Read All Data" command bytes to be sent to the JK BMS.
 // This command requests a comprehensive status update from the BMS.
@@ -236,6 +292,11 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     ESP_LOGI(TAG, "Payload HEX:");
     ESP_LOG_BUFFER_HEX(TAG, payload, payload_len);
 
+    // Initialize current_bms_data fields to default/invalid values
+    current_bms_data.num_cells = 0;
+    current_bms_data.min_cell_voltage = 5.0f;
+    current_bms_data.max_cell_voltage = 0.0f;
+
 
     // 5. Parse specific data fields from the payload.
     // This parsing is based on the "Read All Data" (0x06) command response structure.
@@ -279,7 +340,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
         return;
     }
 
-    printf("Cell Voltages (V):\\n");
+    printf("Cell Voltages (V):\n");
     float min_cell_voltage = 5.0f; // Initialize with a high value to find the minimum.
     float max_cell_voltage = 0.0f; // Initialize with a low value to find the maximum.
 
@@ -291,7 +352,11 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
         if ( (cell_data_start_offset + 2) < payload_len) { // Check bounds: need 3 bytes for cell i, last is at offset+2
              uint16_t voltage_mv = unpack_u16_be(payload, cell_data_start_offset + 1); 
              float voltage_v = voltage_mv / 1000.0f; // Convert mV to V.
-             printf("  Cell %2d: %.3f V\\n", i + 1, voltage_v);
+             printf("  Cell %2d: %.3f V\n", i + 1, voltage_v);
+             // Store individual cell voltage
+             if (i < 24) { // Ensure we don't write out of bounds of our array
+                 current_bms_data.cell_voltages[i] = voltage_v;
+             }
              // Update min/max cell voltages, ensuring voltage_mv > 0 to avoid uninitialized cells if BMS reports them as 0.
              if (voltage_mv > 0 && voltage_v < min_cell_voltage) min_cell_voltage = voltage_v;
              if (voltage_v > max_cell_voltage) max_cell_voltage = voltage_v;
@@ -303,9 +368,14 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // Print Min, Max, and Delta cell voltages if cells were processed.
     if (num_cells > 0) {
         if (min_cell_voltage > 4.9f) min_cell_voltage = 0.0f; // If min_cell_voltage wasn't updated, set to 0.
-        printf("Min Cell Voltage: %.3f V\\n", min_cell_voltage);
-        printf("Max Cell Voltage: %.3f V\\n", max_cell_voltage);
-        printf("Cell Voltage Delta: %.3f V\\n", max_cell_voltage - min_cell_voltage);
+        printf("Min Cell Voltage: %.3f V\n", min_cell_voltage);
+        printf("Max Cell Voltage: %.3f V\n", max_cell_voltage);
+        printf("Cell Voltage Delta: %.3f V\n", max_cell_voltage - min_cell_voltage);
+        // Store in global struct
+        current_bms_data.num_cells = num_cells;
+        current_bms_data.min_cell_voltage = min_cell_voltage;
+        current_bms_data.max_cell_voltage = max_cell_voltage;
+        current_bms_data.cell_voltage_delta = max_cell_voltage - min_cell_voltage;
     }
     
     // current_offset tracks the position in the payload after the last parsed field.
@@ -322,7 +392,8 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x80) { // Check ID and enough data (ID + 2 bytes)
         uint16_t temp_fet_raw = unpack_u16_be(payload, current_offset + 1);
         float temp_fet = (temp_fet_raw > 100) ? -(float)(temp_fet_raw - 100) : (float)temp_fet_raw;
-        printf("MOSFET Temperature: %.1f C (raw: %u)\\n", temp_fet, temp_fet_raw);
+        printf("MOSFET Temperature: %.1f C (raw: %u)\n", temp_fet, temp_fet_raw);
+        current_bms_data.mosfet_temp = temp_fet; // Store data
         current_offset += 3; // Advance offset by ID (1) + Data (2).
     } else {
         ESP_LOGW(TAG, "MOSFET Temp (ID 0x80) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
@@ -333,7 +404,8 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x81) {
         uint16_t temp_1_raw = unpack_u16_be(payload, current_offset + 1);
         float temp_1 = (temp_1_raw > 100) ? -(float)(temp_1_raw - 100) : (float)temp_1_raw;
-        printf("Probe 1 Temperature: %.1f C (raw: %u)\\n", temp_1, temp_1_raw);
+        printf("Probe 1 Temperature: %.1f C (raw: %u)\n", temp_1, temp_1_raw);
+        current_bms_data.probe1_temp = temp_1; // Store data
         current_offset += 3;
     } else {
         ESP_LOGW(TAG, "Probe 1 Temp (ID 0x81) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
@@ -344,7 +416,8 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x82) {
         uint16_t temp_2_raw = unpack_u16_be(payload, current_offset + 1);
         float temp_2 = (temp_2_raw > 100) ? -(float)(temp_2_raw - 100) : (float)temp_2_raw;
-        printf("Probe 2 Temperature: %.1f C (raw: %u)\\n", temp_2, temp_2_raw);
+        printf("Probe 2 Temperature: %.1f C (raw: %u)\n", temp_2, temp_2_raw);
+        current_bms_data.probe2_temp = temp_2; // Store data
         current_offset += 3;
     } else {
         ESP_LOGW(TAG, "Probe 2 Temp (ID 0x82) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
@@ -355,7 +428,9 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // Structure: ID (1 byte) + Total Voltage Data (2 bytes, u16_be, value in 0.01V).
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x83) {
         uint16_t total_voltage_raw = unpack_u16_be(payload, current_offset + 1); 
-        printf("Total Battery Voltage: %.2f V (raw: %u)\\n", total_voltage_raw / 100.0f, total_voltage_raw);
+        float total_v = total_voltage_raw / 100.0f;
+        printf("Total Battery Voltage: %.2f V (raw: %u)\n", total_v, total_voltage_raw);
+        current_bms_data.pack_voltage = total_v; // Store data
         current_offset += 3;
     } else {
         ESP_LOGW(TAG, "Total Voltage (ID 0x83) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
@@ -395,7 +470,8 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
             ESP_LOGI(TAG, "Current (method 2, frame_len_field >= 260): %.2f A", current_a);
         }
 
-        printf("Current: %.2f A (raw: %u)\\n", current_a, current_raw);
+        printf("Current: %.2f A (raw: %u)\n", current_a, current_raw);
+        current_bms_data.pack_current = current_a; // Store data
         current_offset += 3;
     } else {
         ESP_LOGW(TAG, "Current (ID 0x84) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
@@ -406,7 +482,8 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // Structure: ID (1 byte) + SOC Data (1 byte, percentage).
     if (payload_len > current_offset + 1 && payload[current_offset] == 0x85) { // Need ID + 1 byte data.
         uint8_t soc_percent = unpack_u8(payload, current_offset + 1);
-        printf("Remaining Capacity (SOC): %u%%\\n", soc_percent);
+        printf("Remaining Capacity (SOC): %u%%\n", soc_percent);
+        current_bms_data.soc_percent = soc_percent; // Store data
         current_offset += 2; // Advance by ID(1) + Data(1).
     } else {
         ESP_LOGW(TAG, "SOC (ID 0x85) data missing or wrong ID at payload offset %d. Found ID: 0x%02X", 
@@ -417,7 +494,14 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // checking for their respective IDs (e.g., 0x86, 0x87, 0x89, etc.) and data lengths.
     // Example: Cycle count (0x87), Warnings (0x8B), etc.
 
-    printf("----------------------------------------\\n"); // Separator for console output.
+    printf("----------------------------------------\n"); // Separator for console output.
+
+    // After parsing all data and populating current_bms_data
+    // Call function to publish data via MQTT
+    // This check ensures we only try to publish if we have some valid cell data
+    if (current_bms_data.num_cells > 0) {
+        publish_bms_data_mqtt(&current_bms_data);
+    }
 }
 
 
@@ -494,6 +578,17 @@ static void read_bms_data() {
 void app_main(void) {
     // Initialize UART communication.
     init_uart();
+
+    //Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta(); // Initialize Wi-Fi
     
     // Buffer to attempt to read and discard UART echo. Size of the command sent.
     uint8_t echo_buf[sizeof(bms_read_all_cmd)]; 
@@ -532,3 +627,226 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(5000)); 
     }
 }
+
+// Wi-Fi Event Handler
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                                int32_t event_id, void* event_data)
+{
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (wifi_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
+            esp_wifi_connect();
+            wifi_retry_num++;
+            ESP_LOGI(TAG, "retry to connect to the AP");
+        } else {
+            ESP_LOGI(TAG, "connect to the AP fail");
+        }
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        wifi_retry_num = 0;
+        // Start MQTT client once IP is obtained
+        mqtt_app_start();
+    }
+}
+
+// Wi-Fi Initialization
+void wifi_init_sta(void)
+{
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_got_ip));
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = EXAMPLE_ESP_WIFI_SSID,
+            .password = EXAMPLE_ESP_WIFI_PASS,
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK, // Or other appropriate authmode
+        },
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
+    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
+    ESP_ERROR_CHECK(esp_wifi_start() );
+
+    ESP_LOGI(TAG, "wifi_init_sta finished.");
+}
+
+// MQTT Event Handler
+static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data) {
+    ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%ld", event_base, event_id);
+    esp_mqtt_event_handle_t event = event_data;
+    // esp_mqtt_client_handle_t client = event->client; // Not used in this basic handler
+    // int msg_id; // Not used here
+    switch ((esp_mqtt_event_id_t)event_id) {
+    case MQTT_EVENT_CONNECTED:
+        ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+        // Example: Subscribe to a topic (optional)
+        // msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
+        // ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
+        break;
+    case MQTT_EVENT_DISCONNECTED:
+        ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
+        break;
+    case MQTT_EVENT_SUBSCRIBED:
+        ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_UNSUBSCRIBED:
+        ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_PUBLISHED:
+        ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_DATA: // Incoming data event (if subscribed)
+        ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+        printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
+        printf("DATA=%.*s\r\n", event->data_len, event->data);
+        break;
+    case MQTT_EVENT_ERROR:
+        ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
+        if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+            ESP_LOGI(TAG, "Last error code reported from esp-tls: 0x%x", event->error_handle->esp_tls_last_esp_err);
+            ESP_LOGI(TAG, "Last tls stack error number: 0x%x", event->error_handle->esp_tls_stack_err);
+        } else if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+            ESP_LOGI(TAG, "Connection refused error: 0x%x", event->error_handle->connect_return_code);
+        } else {
+            ESP_LOGW(TAG, "Unknown error type: 0x%x", event->error_handle->error_type);
+        }
+        break;
+    default:
+        ESP_LOGI(TAG, "Other event id:%d", event->event_id);
+        break;
+    }
+}
+
+// MQTT Application Start
+static void mqtt_app_start(void) {
+    esp_mqtt_client_config_t mqtt_cfg = {
+        .broker.address.uri = MQTT_BROKER_URL,
+    };
+    // The event_handle field was removed from esp_mqtt_client_config_t in ESP-IDF v5.0.
+    // Events are now registered globally for the client instance.
+    // For older IDF: .event_handle = mqtt_event_handler,
+
+    mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
+    /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
+    esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_start(mqtt_client);
+    ESP_LOGI(TAG, "MQTT client started.");
+}
+
+// Placeholder for publishing BMS data
+// This function will be expanded to create and send the two JSON messages
+void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
+    if (!mqtt_client) {
+        ESP_LOGE(TAG, "MQTT client not initialized!");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Preparing to publish BMS data via MQTT...");
+
+    // --- Create JSON for NodeJKBMS2/pack ---
+    cJSON *pack_root = cJSON_CreateObject();
+    if (pack_root == NULL) {
+        ESP_LOGE(TAG, "Failed to create cJSON object for pack data.");
+        return;
+    }
+
+    cJSON_AddNumberToObject(pack_root, "packV", bms_data_ptr->pack_voltage);
+    cJSON_AddNumberToObject(pack_root, "packA", bms_data_ptr->pack_current);
+    // Add other pack-specific fields here as they become available in bms_data_ptr
+    // For example:
+    // cJSON_AddNumberToObject(pack_root, "packRateCap", bms_data_ptr->pack_rate_cap);
+    cJSON_AddNumberToObject(pack_root, "packNumberOfCells", bms_data_ptr->num_cells);
+    // ... protectionStatus, packNumberCycles, etc. will be added later
+    cJSON_AddNumberToObject(pack_root, "packSOC", bms_data_ptr->soc_percent);
+    
+    // Example for tempSensorValues (assuming NTC0=mosfet, NTC1=probe1, NTC2=probe2 for now)
+    cJSON *temp_sensors = cJSON_CreateObject();
+    if (temp_sensors) {
+        cJSON_AddNumberToObject(temp_sensors, "NTC0", bms_data_ptr->mosfet_temp);
+        cJSON_AddNumberToObject(temp_sensors, "NTC1", bms_data_ptr->probe1_temp);
+        cJSON_AddNumberToObject(temp_sensors, "NTC2", bms_data_ptr->probe2_temp); // If probe2 exists
+        cJSON_AddItemToObject(pack_root, "tempSensorValues", temp_sensors);
+    }
+
+
+    char *pack_json_string = cJSON_PrintUnformatted(pack_root);
+    if (pack_json_string == NULL) {
+        ESP_LOGE(TAG, "Failed to print pack cJSON to string.");
+    } else {
+        esp_mqtt_client_publish(mqtt_client, MQTT_TOPIC_PACK, pack_json_string, 0, 1, 0);
+        ESP_LOGI(TAG, "Published to %s: %s", MQTT_TOPIC_PACK, pack_json_string);
+        free(pack_json_string);
+    }
+    cJSON_Delete(pack_root);
+
+
+    // --- Create JSON for NodeJKBMS/cells ---
+    cJSON *cells_root = cJSON_CreateObject();
+    if (cells_root == NULL) {
+        ESP_LOGE(TAG, "Failed to create cJSON object for cells data.");
+        return;
+    }
+
+    char cell_mv_key[16];
+    char cell_v_key[16];
+    for (int i = 0; i < bms_data_ptr->num_cells; i++) {
+        float cell_v = bms_data_ptr->cell_voltages[i]; 
+        int cell_mv = (int)(cell_v * 1000); // Keep mV as integer
+
+        snprintf(cell_mv_key, sizeof(cell_mv_key), "cell%dmV", i);
+        snprintf(cell_v_key, sizeof(cell_v_key), "cell%dV", i);
+        cJSON_AddNumberToObject(cells_root, cell_mv_key, cell_mv);
+        // For cell_v, ensure it's added with desired precision if the library supports it directly,
+        // or format it as a string if necessary. cJSON_AddNumberToObject typically uses double.
+        // The precision of float to string conversion for MQTT is often handled by snprintf or similar if needed,
+        // but cJSON will store it as a number. The display to 3 decimal places is inherent in float representation.
+        cJSON_AddNumberToObject(cells_root, cell_v_key, cell_v); // cJSON handles float/double precision
+    }
+    
+    // Add min/max/delta if desired for the cells topic, or keep them in pack topic
+    // Based on your example, they are not in the /cells topic.
+
+    char *cells_json_string = cJSON_PrintUnformatted(cells_root);
+    if (cells_json_string == NULL) {
+        ESP_LOGE(TAG, "Failed to print cells cJSON to string.");
+    } else {
+        esp_mqtt_client_publish(mqtt_client, MQTT_TOPIC_CELLS, cells_json_string, 0, 1, 0);
+        ESP_LOGI(TAG, "Published to %s: %s", MQTT_TOPIC_CELLS, cells_json_string);
+        free(cells_json_string);
+    }
+    cJSON_Delete(cells_root);
+}
+
+// Small correction in parse_and_print_bms_data for storing cell voltages
+// This is a simplified version, actual storage should be done inside the loop
+// For now, this is a placeholder to ensure the structure is ready.
+// The actual cell voltage storage needs to be done within the cell parsing loop:
+/*
+Inside parse_and_print_bms_data, within the cell voltage parsing loop:
+...
+float voltage_v = voltage_mv / 1000.0f;
+printf("  Cell %2d: %.3f V\n", i + 1, voltage_v);
+if (i < 24) { // Ensure we don't write out of bounds
+    current_bms_data.cell_voltages[i] = voltage_v;
+}
+...
+*/
