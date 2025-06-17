@@ -1,0 +1,32 @@
+Read/Write/RW,Data identification,Name,byte,Type,Information
+RW,0x99,Equalizing opening differential,2,HEX,10 - 1000 MV
+RW,0x9a,Active equalization switch,1,HEX,0 off or 1 on
+RW,0x9b,Power tube temperature protection value,2,HEX,0 - 100 °C
+RW,0x9f,Temperature protection value in battery box,2,HEX,0 - 100 °C
+RW,0xa0,Recovery value 2 of battery in box,2,HEX,40 - 100 °C
+RW,0xa1,Battery temperature difference,2,HEX,40 -- 100 °C
+RW,0xa2,Battery charging 2 high temperature protection value,2,HEX,5-20 °C
+RW,0xa3,High Temperature Protection Value for Battery Charging,2,HEX,0-100 °C Y
+RW,0xa4,High Temperature Protection Value for Battery Discharge,2,HEX,0 - 100 °C
+RW,0xa5,Charging cryoprotection value,2,HEX,- 45 °C /+ 25 °C(No datum - signed data)
+RW,0xa6,Recovery value 2 of charge cryoprotection,2,HEX,- 45 °C /+ 25 °C(No datum - signed data)
+RW,0xa7,Discharge cryoprotection value,2,HEX,- 45 °C /+ 25 °C(No datum - signed data)
+RW,0xa8,Discharge Low Temperature Protection Recovery Value,2,HEX,- 45 °C /+ 25 °C(No datum - signed data)
+RW,0xa9,Number of battery strings settings,1,HEX,13 - 32
+RW,0xaa,Battery Capacity Settings,4,HEX,AH
+RW,0xab,Charging MOS switch,1,HEX,OFF 1 ON
+RW,0xac,Discharge MOS switch,1,HEX,OFF 1 ON
+RW,0xad,Current Calibration,2,HEX,100 MA- 20000 MA
+RW,0xae,Protective Board 1 Address,1,HEX,This site is reserved and used in cascade
+RW,0xaf,Battery type,1,HEX,0: lithium iron phosphate, 1: ternary, 2: lithium titanate
+RW,0xb0,Sleep Wait Time,2,HEX,Second data, for reference
+RW,0xb1,Low Capacity Alarm Value,1,HEX,0 - 80%
+RW,0xb2,Modify parameter password,10,HEX,For temporary reference, fix a password
+RW,0xb3,Special Charger 1 Switch,1,HEX,0 OFF 1 ON
+RW,0xb4,Device ID Code,8,Code,Example 60300001 (60 - nominal voltage level: defined according to the voltage level, for example, 60 is 60V Series 48 is 48V series; 3 - material system: according to the system definition of battery material, for example, iron lithium code is 1 manganese acid code 2 ternary code 3; 00001 - production serial number: according to group n of the model produced by the manufacturer in the current month, the number is n (for example, group 1 of a model, n is 00001))
+RW,0xb5,Date of production,4,Code,Example 2004 - production year: take the last two digits according to the actual production year; List the batteries produced in 2020, year code 20; Production month: from January to December; character
+RW,0xb6,System working time,4,HEX,Reset when leaving the factory, unit: Min
+R,0xb7,Software Version Number,15,Code,NW_1_0_0_200428
+RW,0xb8,Start Current Calibration,1,HEX,1: Start Calibration 0: Turn off calibration
+RW,0xb9,Actual battery capacity,4,HEX,Code AH
+RW,0xba,Naming of factory ID,24,Column,"BT 3072020120000200521001" *Product name: BT for batteries *Material system: lithium-iron code 1;Manganic acid code 2;Ternary code 3 * Voltage level: 48V series 48;60 V Series 6072 V Series 72 * Capacity level: 20 for 20AH specification *Cycle life: 04 marks for 400 cycles, 12 marks for 1200 cycles * Factory Code: English code of battery manufacturer for low-speed vehicles, if the English code of the manufacturer is less than four digits, the character 0 is used to complement it. *Year of production: two digits after actual year of production;List the battery year code "19" produced in 2019 *Month of production: January-December *Date of production: 01 - 31 *Production Pipeline Number: According to Group N of the model produced on the day of the manufacturer's production date, the number is N (example: Group 1 of a model, 001)"

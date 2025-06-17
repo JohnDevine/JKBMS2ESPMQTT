@@ -1,0 +1,163 @@
+RW
+
+RW
+
+0x9a
+
+Equalizing
+opening
+differential
+
+(Active
+equalization
+switch
+
+2 HEX
+
+4 HEX
+
+40-1000 MV
+
+0 off orlon
+
+RW
+
+Ox9b
+
+Power tube
+temperature
+protection value
+
+2 HEX
+
+0 -- 100 °C
+
+RW
+
+Ox9f
+
+Temperature
+protection value
+in battery box
+
+Nn
+
+HEX
+
+0 - 100 °C
+
+RW
+
+Oxad
+
+Recovery value
+of battery in box
+
+Nn
+
+HEX
+
+to - 100°C
+
+RW
+
+Oxal
+
+Battery
+jtemperature
+difference
+
+2 HEX
+
+0 -- 100 °C
+
+RW
+
+Oxa2
+
+Battery charging
+high
+jtemperatuye
+protection value
+
+N
+
+HEX
+
+5 - 20°C
+
+RW
+
+Oxa3
+
+‘Charging
+
+HEX
+
+- 100°C
+
+RW
+
+RW
+
+RW
+
+Oxa4
+
+OxaS
+
+Oxa6é
+
+High
+Temperature
+Protection Value
+for Battery
+Discharge
+Charging
+cryoprotection
+Value
+
+Recovery value
+of charge
+cryoprotection
+
+2 HEX
+
+N
+
+HEX
+
+2 HEX
+
+(0 - 100 °C
+
++ 45 °C /+ 25 °C(No datum - signed data)
+
++ 45 °C /+ 25 °C(No datum - signed data)
+
+RW
+
+Oxa7
+
+Discharge
+cryoprotection
+Value
+
+2 HEX
+
++ 45 °C /+ 25 °C(No datum - signed data)
+
+RW
+
+Oxa8s
+
+Recovery Value
+
+pea rge Low
+emperature
+\Protection
+
+2 HEX
+
+- 45 °C /+ 25 °C(No datum - signed data)
+

@@ -448,26 +448,26 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
         ESP_LOGI(TAG, "Current parsing: frame_len_field=%u, current_raw=0x%04X (%u)", 
                  frame_len_field, current_raw, current_raw);
 
-        // Logic from data_bms_full.py:
+        // Logic from data_bms_full.py, swapped for alternative interpretation:
         // `frame_len_field` is the length from the BMS packet (from length field itself to end of CRC).
-        if (frame_len_field < 260) { 
-            // Method 1: (10000 - raw_value) * 0.01. This implies 10000 is zero current.
-            // e.g. raw=10000 -> 0A. raw=9900 -> 1A. raw=10100 -> -1A.
-            current_a = (float)(10000 - (int32_t)current_raw) * 0.01f;
-            ESP_LOGI(TAG, "Current (method 1, frame_len_field < 260): %.2f A", current_a);
-        } else {
-            // Method 2: MSB indicates sign.
+        if (frame_len_field < 260) {
+            // Method 2 (Previously for frame_len_field >= 260): MSB indicates sign.
             // Python: if (value & 0x8000) == 0x8000 : current = (value & 0x7FFF)/100
             //         else : current = ((value & 0x7FFF)/100) * -1
             // This means if MSB is set, it's positive current (value & 0x7FFF).
             // If MSB is clear, it's negative current -(value & 0x7FFF).
-            // Note: This is different from standard two's complement.
-            if ((current_raw & 0x8000) == 0x8000) { 
+            // Note: This is different from standard two\'s complement.
+            if ((current_raw & 0x8000) == 0x8000) {
                 current_a = (float)(current_raw & 0x7FFF) / 100.0f;
-            } else { 
+            } else {
                 current_a = -((float)(current_raw & 0x7FFF) / 100.0f);
             }
-            ESP_LOGI(TAG, "Current (method 2, frame_len_field >= 260): %.2f A", current_a);
+            ESP_LOGI(TAG, "Current (method 2, frame_len_field < 260): %.2f A", current_a);
+        } else {
+            // Method 1 (Previously for frame_len_field < 260): (10000 - raw_value) * 0.01. This implies 10000 is zero current.
+            // e.g. raw=10000 -> 0A. raw=9900 -> 1A. raw=10100 -> -1A.
+            current_a = (float)(10000 - (int32_t)current_raw) * 0.01f;
+            ESP_LOGI(TAG, "Current (method 1, frame_len_field >= 260): %.2f A", current_a);
         }
 
         printf("Current: %.2f A (raw: %u)\n", current_a, current_raw);
