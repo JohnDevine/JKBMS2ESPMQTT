@@ -22,6 +22,18 @@
 #include "mqtt_client.h"
 #include "cJSON.h" // For JSON formatting
 
+#define WIFI_NVS_NAMESPACE "wifi_cfg"
+#define WIFI_NVS_KEY_SSID "ssid"
+#define WIFI_NVS_KEY_PASS "pass"
+#define MQTT_NVS_KEY_URL "broker_url"
+#define DEFAULT_WIFI_SSID "BAANFARANG_O"
+#define DEFAULT_WIFI_PASS "tAssy@#28"
+#define DEFAULT_MQTT_BROKER_URL "mqtt://192.168.1.5"
+
+static char wifi_ssid[33] = DEFAULT_WIFI_SSID;
+static char wifi_pass[65] = DEFAULT_WIFI_PASS;
+static char mqtt_broker_url[128] = DEFAULT_MQTT_BROKER_URL;
+
 // Define the UART peripheral number to be used (UART2 in this case)
 #define UART_NUM UART_NUM_2
 // Define the GPIO pin for UART Transmit (TX)
@@ -35,8 +47,6 @@
 static const char *TAG = "BMS_READER";
 
 // Wi-Fi Configuration
-#define EXAMPLE_ESP_WIFI_SSID      "BAANFARANG_O"
-#define EXAMPLE_ESP_WIFI_PASS      "tAssy@#28"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  5
 
 // MQTT Configuration
@@ -671,6 +681,45 @@ static void read_bms_data() {
     }
 }
 
+// Place these functions before app_main so they are visible to it
+void load_wifi_config_from_nvs() {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        size_t ssid_len = sizeof(wifi_ssid);
+        size_t pass_len = sizeof(wifi_pass);
+        if (nvs_get_str(nvs_handle, WIFI_NVS_KEY_SSID, wifi_ssid, &ssid_len) != ESP_OK) {
+            strncpy(wifi_ssid, DEFAULT_WIFI_SSID, sizeof(wifi_ssid)-1);
+            nvs_set_str(nvs_handle, WIFI_NVS_KEY_SSID, wifi_ssid);
+        }
+        if (nvs_get_str(nvs_handle, WIFI_NVS_KEY_PASS, wifi_pass, &pass_len) != ESP_OK) {
+            strncpy(wifi_pass, DEFAULT_WIFI_PASS, sizeof(wifi_pass)-1);
+            nvs_set_str(nvs_handle, WIFI_NVS_KEY_PASS, wifi_pass);
+        }
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+    } else {
+        strncpy(wifi_ssid, DEFAULT_WIFI_SSID, sizeof(wifi_ssid)-1);
+        strncpy(wifi_pass, DEFAULT_WIFI_PASS, sizeof(wifi_pass)-1);
+    }
+}
+
+void load_mqtt_config_from_nvs() {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        size_t url_len = sizeof(mqtt_broker_url);
+        if (nvs_get_str(nvs_handle, MQTT_NVS_KEY_URL, mqtt_broker_url, &url_len) != ESP_OK) {
+            strncpy(mqtt_broker_url, DEFAULT_MQTT_BROKER_URL, sizeof(mqtt_broker_url)-1);
+            nvs_set_str(nvs_handle, MQTT_NVS_KEY_URL, mqtt_broker_url);
+        }
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+    } else {
+        strncpy(mqtt_broker_url, DEFAULT_MQTT_BROKER_URL, sizeof(mqtt_broker_url)-1);
+    }
+}
+
 // Main application entry point.
 void app_main(void) {
     // Initialize UART communication.
@@ -683,7 +732,11 @@ void app_main(void) {
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
+    load_wifi_config_from_nvs();
+    load_mqtt_config_from_nvs();
+    ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
+    ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
+    ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta(); // Initialize Wi-Fi
     
@@ -773,11 +826,13 @@ void wifi_init_sta(void)
 
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = EXAMPLE_ESP_WIFI_SSID,
-            .password = EXAMPLE_ESP_WIFI_PASS,
+            .ssid = "",
+            .password = "",
             .threshold.authmode = WIFI_AUTH_WPA2_PSK, // Or other appropriate authmode
         },
     };
+    strncpy((char*)wifi_config.sta.ssid, wifi_ssid, sizeof(wifi_config.sta.ssid)-1);
+    strncpy((char*)wifi_config.sta.password, wifi_pass, sizeof(wifi_config.sta.password)-1);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
     ESP_ERROR_CHECK(esp_wifi_start() );
@@ -836,7 +891,7 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
 // MQTT Application Start
 static void mqtt_app_start(void) {
     esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = MQTT_BROKER_URL,
+        .broker.address.uri = mqtt_broker_url,
     };
     // The event_handle field was removed from esp_mqtt_client_config_t in ESP-IDF v5.0.
     // Events are now registered globally for the client instance.

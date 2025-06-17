@@ -1,5 +1,9 @@
 # BMS-RS485 Communication Protocol
 
+## *************** NOTE NOTE NOTE ************
+## Read this document in conjunction with "Data Identification Codes.csv"
+
+
 ## Version History
 
 - **V20191124**: First draft  
