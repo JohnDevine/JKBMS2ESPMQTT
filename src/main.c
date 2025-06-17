@@ -72,6 +72,61 @@ typedef struct {
 static bms_data_t current_bms_data;
 
 
+// --- Data Identification Code Table (auto-generated from CSV) ---
+typedef struct {
+    uint8_t id;
+    const char *name;
+    int byte_len;
+    const char *type;
+    const char *info;
+} bms_idcode_t;
+
+static const bms_idcode_t bms_idcodes[] = {
+    {0x99, "Equalizing opening differential", 2, "HEX", "10 - 1000 MV"},
+    {0x9a, "Active equalization switch", 1, "HEX", "0 off or 1 on"},
+    {0x9b, "Power tube temperature protection value", 2, "HEX", "0 - 100 °C"},
+    {0x9f, "Temperature protection value in battery box", 2, "HEX", "0 - 100 °C"},
+    {0xa0, "Recovery value 2 of battery in box", 2, "HEX", "40 - 100 °C"},
+    {0xa1, "Battery temperature difference", 2, "HEX", "40 -- 100 °C"},
+    {0xa2, "Battery charging 2 high temperature protection value", 2, "HEX", "5-20 °C"},
+    {0xa3, "High Temperature Protection Value for Battery Charging", 2, "HEX", "0-100 °C Y"},
+    {0xa4, "High Temperature Protection Value for Battery Discharge", 2, "HEX", "0 - 100 °C"},
+    {0xa5, "Charging cryoprotection value", 2, "HEX", "- 45 °C /+ 25 °C(No datum - signed data)"},
+    {0xa6, "Recovery value 2 of charge cryoprotection", 2, "HEX", "- 45 °C /+ 25 °C(No datum - signed data)"},
+    {0xa7, "Discharge cryoprotection value", 2, "HEX", "- 45 °C /+ 25 °C(No datum - signed data)"},
+    {0xa8, "Discharge Low Temperature Protection Recovery Value", 2, "HEX", "- 45 °C /+ 25 °C(No datum - signed data)"},
+    {0xa9, "Number of battery strings settings", 1, "HEX", "13 - 32"},
+    {0xaa, "Battery Capacity Settings", 4, "HEX", "AH"},
+    {0xab, "Charging MOS switch", 1, "HEX", "OFF 1 ON"},
+    {0xac, "Discharge MOS switch", 1, "HEX", "OFF 1 ON"},
+    {0xad, "Current Calibration", 2, "HEX", "100 MA- 20000 MA"},
+    {0xae, "Protective Board 1 Address", 1, "HEX", "This site is reserved and used in cascade"},
+    {0xaf, "Battery type", 1, "HEX", "0: lithium iron phosphate, 1: ternary, 2: lithium titanate"},
+    {0xb0, "Sleep Wait Time", 2, "HEX", "Second data, for reference"},
+    {0xb1, "Low Capacity Alarm Value", 1, "HEX", "0 - 80%"},
+    {0xb2, "Modify parameter password", 10, "HEX", "For temporary reference, fix a password"},
+    {0xb3, "Special Charger 1 Switch", 1, "HEX", "0 OFF 1 ON"},
+    {0xb4, "Device ID Code", 8, "Code", "Example 60300001 ..."},
+    {0xb5, "Date of production", 4, "Code", "Example 2004 ..."},
+    {0xb6, "System working time", 4, "HEX", "Reset when leaving the factory, unit: Min"},
+    {0xb7, "Software Version Number", 15, "Code", "NW_1_0_0_200428"},
+    {0xb8, "Start Current Calibration", 1, "HEX", "1: Start Calibration 0: Turn off calibration"},
+    {0xb9, "Actual battery capacity", 4, "HEX", "Code AH"},
+    {0xba, "Naming of factory ID", 24, "Column", "BT 3072020120000200521001 ..."},
+};
+#define BMS_IDCODES_COUNT (sizeof(bms_idcodes)/sizeof(bms_idcodes[0]))
+
+// --- Store decoded extra fields for MQTT output ---
+typedef struct {
+    uint8_t id;
+    uint32_t value;
+    char strval[48]; // For ASCII fields
+    int is_ascii;
+} bms_extra_field_t;
+#define MAX_EXTRA_FIELDS 32
+static bms_extra_field_t extra_fields[MAX_EXTRA_FIELDS];
+static int extra_fields_count = 0;
+
 // Forward declarations for functions defined later in this file
 // Initializes the UART communication peripheral.
 void init_uart();
@@ -175,7 +230,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // Offset | Length | Description
     // -------|--------|----------------------------------------------------
     // 0      | 2      | Start Frame (Fixed: 0x4E, 0x57)
-    // 2      | 2      | Length (Big-endian, from this field to end of CRC)
+    // 2      | 2      | Length (Big-endian, from this field to the end of the checksum)
     // 4      | 4      | Terminal Number (Usually 0x00000000)
     // 8      | 1      | Command Word (e.g., 0x00 for response to read all)
     // 9      | 1      | Frame Source (e.g., 0x00 for BMS)
@@ -490,9 +545,51 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
                  current_offset, payload_len > current_offset ? payload[current_offset] : 0xFF);
     }
     
-    // Further data fields can be parsed here by adding more blocks similar to the above,
-    // checking for their respective IDs (e.g., 0x86, 0x87, 0x89, etc.) and data lengths.
-    // Example: Cycle count (0x87), Warnings (0x8B), etc.
+    // --- Parse additional fields from Data Identification Codes table ---
+    extra_fields_count = 0;
+    int extra_offset = current_offset;
+    while (extra_offset < payload_len && extra_fields_count < MAX_EXTRA_FIELDS) {
+        uint8_t id = payload[extra_offset];
+        int found = 0;
+        for (size_t i = 0; i < BMS_IDCODES_COUNT; ++i) {
+            if (bms_idcodes[i].id == id) {
+                uint32_t value = 0;
+                int bytes = bms_idcodes[i].byte_len;
+                const char *type = bms_idcodes[i].type;
+                int is_ascii = (type && (strcmp(type, "Code") == 0 || strcmp(type, "Column") == 0));
+                char strval[48] = {0};
+                if (bytes > 0 && (extra_offset + bytes) < payload_len) {
+                    if (is_ascii) {
+                        int copylen = (bytes < 47) ? bytes : 47;
+                        memcpy(strval, &payload[extra_offset + 1], copylen);
+                        strval[copylen] = '\0';
+                        // Remove non-printable chars
+                        for (int s = 0; s < copylen; ++s) {
+                            if (strval[s] < 32 || strval[s] > 126) strval[s] = '\0';
+                        }
+                    } else {
+                        for (int b = 0; b < bytes; ++b) {
+                            value = (value << 8) | payload[extra_offset + 1 + b];
+                        }
+                    }
+                }
+                extra_fields[extra_fields_count].id = id;
+                extra_fields[extra_fields_count].value = value;
+                extra_fields[extra_fields_count].is_ascii = is_ascii;
+                if (is_ascii) {
+                    strncpy(extra_fields[extra_fields_count].strval, strval, sizeof(extra_fields[extra_fields_count].strval)-1);
+                } else {
+                    extra_fields[extra_fields_count].strval[0] = '\0';
+                }
+                extra_fields_count++;
+                ESP_LOGI(TAG, "Decoded %s (0x%02X): %s%lu", bms_idcodes[i].name, id, is_ascii ? strval : "", is_ascii ? 0 : (unsigned long)value);
+                extra_offset += 1 + bytes;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) extra_offset++;
+    }
 
     printf("----------------------------------------\n"); // Separator for console output.
 
@@ -788,6 +885,34 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
     }
 
 
+    // --- Add all extra decoded fields to MQTT JSON output (handle ASCII fields as strings) ---
+    for (int i = 0; i < extra_fields_count; ++i) {
+        const char *field_name = NULL;
+        for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
+            if (bms_idcodes[j].id == extra_fields[i].id) {
+                field_name = bms_idcodes[j].name;
+                break;
+            }
+        }
+        if (field_name) {
+            char sanitized[64];
+            int si = 0;
+            for (int k = 0; field_name[k] && si < 63; ++k) {
+                char c = field_name[k];
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                    sanitized[si++] = c;
+                } else if (c == ' ' || c == '-' || c == '/' || c == '%') {
+                    sanitized[si++] = '_';
+                }
+            }
+            sanitized[si] = '\0';
+            if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
+                cJSON_AddStringToObject(pack_root, sanitized, extra_fields[i].strval);
+            } else {
+                cJSON_AddNumberToObject(pack_root, sanitized, extra_fields[i].value);
+            }
+        }
+    }
     char *pack_json_string = cJSON_PrintUnformatted(pack_root);
     if (pack_json_string == NULL) {
         ESP_LOGE(TAG, "Failed to print pack cJSON to string.");
@@ -835,18 +960,3 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
     }
     cJSON_Delete(cells_root);
 }
-
-// Small correction in parse_and_print_bms_data for storing cell voltages
-// This is a simplified version, actual storage should be done inside the loop
-// For now, this is a placeholder to ensure the structure is ready.
-// The actual cell voltage storage needs to be done within the cell parsing loop:
-/*
-Inside parse_and_print_bms_data, within the cell voltage parsing loop:
-...
-float voltage_v = voltage_mv / 1000.0f;
-printf("  Cell %2d: %.3f V\n", i + 1, voltage_v);
-if (i < 24) { // Ensure we don't write out of bounds
-    current_bms_data.cell_voltages[i] = voltage_v;
-}
-...
-*/
