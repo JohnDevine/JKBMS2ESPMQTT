@@ -859,6 +859,30 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
 
     ESP_LOGI(TAG, "Preparing to publish BMS data via MQTT...");
 
+    // --- Determine topic prefix from Naming of factory ID ---
+    char topic_prefix[128] = "BMS/";
+    for (int i = 0; i < extra_fields_count; ++i) {
+        if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
+            // Find the field name for this id
+            for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
+                if (bms_idcodes[j].id == extra_fields[i].id && strcmp(bms_idcodes[j].name, "Naming of factory ID") == 0) {
+                    strncat(topic_prefix, extra_fields[i].strval, sizeof(topic_prefix) - strlen(topic_prefix) - 2); // leave space for '/\0'
+                    size_t len = strlen(topic_prefix);
+                    if (len < sizeof(topic_prefix) - 1 && topic_prefix[len-1] != '/') {
+                        topic_prefix[len] = '/';
+                        topic_prefix[len+1] = '\0';
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    char mqtt_topic_pack[160];
+    char mqtt_topic_cells[160];
+    snprintf(mqtt_topic_pack, sizeof(mqtt_topic_pack), "%spack", topic_prefix);
+    snprintf(mqtt_topic_cells, sizeof(mqtt_topic_cells), "%scells", topic_prefix);
+
+
     // --- Create JSON for NodeJKBMS2/pack ---
     cJSON *pack_root = cJSON_CreateObject();
     if (pack_root == NULL) {
@@ -913,49 +937,39 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
             }
         }
     }
+    // --- Publish using dynamic topic prefix ---
     char *pack_json_string = cJSON_PrintUnformatted(pack_root);
     if (pack_json_string == NULL) {
         ESP_LOGE(TAG, "Failed to print pack cJSON to string.");
     } else {
-        esp_mqtt_client_publish(mqtt_client, MQTT_TOPIC_PACK, pack_json_string, 0, 1, 0);
-        ESP_LOGI(TAG, "Published to %s: %s", MQTT_TOPIC_PACK, pack_json_string);
+        esp_mqtt_client_publish(mqtt_client, mqtt_topic_pack, pack_json_string, 0, 1, 0);
+        ESP_LOGI(TAG, "Published to %s: %s", mqtt_topic_pack, pack_json_string);
         free(pack_json_string);
     }
     cJSON_Delete(pack_root);
 
-
-    // --- Create JSON for NodeJKBMS/cells ---
+    // --- Create JSON for cells and publish ---
     cJSON *cells_root = cJSON_CreateObject();
     if (cells_root == NULL) {
         ESP_LOGE(TAG, "Failed to create cJSON object for cells data.");
         return;
     }
-
     char cell_mv_key[16];
     char cell_v_key[16];
     for (int i = 0; i < bms_data_ptr->num_cells; i++) {
         float cell_v = bms_data_ptr->cell_voltages[i]; 
-        int cell_mv = (int)(cell_v * 1000); // Keep mV as integer
-
+        int cell_mv = (int)(cell_v * 1000);
         snprintf(cell_mv_key, sizeof(cell_mv_key), "cell%dmV", i);
         snprintf(cell_v_key, sizeof(cell_v_key), "cell%dV", i);
         cJSON_AddNumberToObject(cells_root, cell_mv_key, cell_mv);
-        // For cell_v, ensure it's added with desired precision if the library supports it directly,
-        // or format it as a string if necessary. cJSON_AddNumberToObject typically uses double.
-        // The precision of float to string conversion for MQTT is often handled by snprintf or similar if needed,
-        // but cJSON will store it as a number. The display to 3 decimal places is inherent in float representation.
-        cJSON_AddNumberToObject(cells_root, cell_v_key, cell_v); // cJSON handles float/double precision
+        cJSON_AddNumberToObject(cells_root, cell_v_key, cell_v);
     }
-    
-    // Add min/max/delta if desired for the cells topic, or keep them in pack topic
-    // Based on your example, they are not in the /cells topic.
-
     char *cells_json_string = cJSON_PrintUnformatted(cells_root);
     if (cells_json_string == NULL) {
         ESP_LOGE(TAG, "Failed to print cells cJSON to string.");
     } else {
-        esp_mqtt_client_publish(mqtt_client, MQTT_TOPIC_CELLS, cells_json_string, 0, 1, 0);
-        ESP_LOGI(TAG, "Published to %s: %s", MQTT_TOPIC_CELLS, cells_json_string);
+        esp_mqtt_client_publish(mqtt_client, mqtt_topic_cells, cells_json_string, 0, 1, 0);
+        ESP_LOGI(TAG, "Published to %s: %s", mqtt_topic_cells, cells_json_string);
         free(cells_json_string);
     }
     cJSON_Delete(cells_root);
