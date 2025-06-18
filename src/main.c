@@ -21,18 +21,24 @@
 #include "lwip/sys.h"
 #include "mqtt_client.h"
 #include "cJSON.h" // For JSON formatting
+#include "esp_spiffs.h"
+#include "esp_system.h"
+#include "esp_http_server.h"
 
 #define WIFI_NVS_NAMESPACE "wifi_cfg"
 #define WIFI_NVS_KEY_SSID "ssid"
 #define WIFI_NVS_KEY_PASS "pass"
 #define MQTT_NVS_KEY_URL "broker_url"
+#define NVS_KEY_SAMPLE_INTERVAL "sample_interval"
 #define DEFAULT_WIFI_SSID "BAANFARANG_O"
 #define DEFAULT_WIFI_PASS "tAssy@#28"
 #define DEFAULT_MQTT_BROKER_URL "mqtt://192.168.1.5"
+#define DEFAULT_SAMPLE_INTERVAL 5000L
 
 static char wifi_ssid[33] = DEFAULT_WIFI_SSID;
 static char wifi_pass[65] = DEFAULT_WIFI_PASS;
 static char mqtt_broker_url[128] = DEFAULT_MQTT_BROKER_URL;
+static long sample_interval_ms = DEFAULT_SAMPLE_INTERVAL;
 
 // Define the UART peripheral number to be used (UART2 in this case)
 #define UART_NUM UART_NUM_2
@@ -40,6 +46,7 @@ static char mqtt_broker_url[128] = DEFAULT_MQTT_BROKER_URL;
 #define UART_TX_PIN GPIO_NUM_17
 // Define the GPIO pin for UART Receive (RX)
 #define UART_RX_PIN GPIO_NUM_16
+#define BOOT_BTN_GPIO GPIO_NUM_0
 // Define the size of the UART buffer for receiving data
 #define UART_BUF_SIZE 1024
 
@@ -155,6 +162,11 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
 void wifi_init_sta(void);
 static void mqtt_app_start(void);
 void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr); // Combined publish function for now
+
+// Forward declarations for URL decoding
+int hex2int(char c);
+void url_decode(char *dst, const char *src, size_t dstsize);
+
 
 // Constant array holding the "Read All Data" command bytes to be sent to the JK BMS.
 // This command requests a comprehensive status update from the BMS.
@@ -720,23 +732,208 @@ void load_mqtt_config_from_nvs() {
     }
 }
 
+void load_sample_interval_from_nvs() {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        int64_t val = 0;
+        if (nvs_get_i64(nvs_handle, NVS_KEY_SAMPLE_INTERVAL, &val) == ESP_OK && val > 0) {
+            sample_interval_ms = (long)val;
+        } else {
+            sample_interval_ms = DEFAULT_SAMPLE_INTERVAL;
+            nvs_set_i64(nvs_handle, NVS_KEY_SAMPLE_INTERVAL, (int64_t)sample_interval_ms);
+        }
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+    } else {
+        sample_interval_ms = DEFAULT_SAMPLE_INTERVAL;
+    }
+}
+
+// SPIFFS init
+void init_spiffs() {
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = "/spiffs",
+        .partition_label = NULL,
+        .max_files = 5,
+        .format_if_mount_failed = true
+    };
+    ESP_ERROR_CHECK(esp_vfs_spiffs_register(&conf));
+}
+
+// HTTP handler for /params.json
+esp_err_t params_json_get_handler(httpd_req_t *req) {
+    char buf[512];
+    snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"password\":\"%s\",\"mqtt_url\":\"%s\",\"sample_interval\":%ld}", wifi_ssid, wifi_pass, mqtt_broker_url, sample_interval_ms);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+// HTTP handler for /update (POST)
+esp_err_t params_update_post_handler(httpd_req_t *req) {
+    char buf[512];
+    int ret = httpd_req_recv(req, buf, sizeof(buf)-1);
+    if (ret <= 0) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    buf[ret] = 0;
+    char ssid[33] = "", pass[65] = "", mqtt_url[128] = "";
+    long interval = 5000;
+    sscanf(strstr(buf, "ssid=")+5, "%32[^&]", ssid);
+    sscanf(strstr(buf, "password=")+9, "%64[^&]", pass);
+    sscanf(strstr(buf, "mqtt_url=")+9, "%127[^&]", mqtt_url);
+    sscanf(strstr(buf, "sample_interval=")+16, "%ld", &interval);
+    // Decode URL-encoded values
+    char ssid_dec[33], pass_dec[65], url_dec[128];
+    url_decode(ssid_dec, ssid, sizeof(ssid_dec));
+    url_decode(pass_dec, pass, sizeof(pass_dec));
+    url_decode(url_dec, mqtt_url, sizeof(url_dec));
+    strncpy(wifi_ssid, ssid_dec, sizeof(wifi_ssid)-1);
+    strncpy(wifi_pass, pass_dec, sizeof(wifi_pass)-1);
+    strncpy(mqtt_broker_url, url_dec, sizeof(mqtt_broker_url)-1);
+    sample_interval_ms = interval;
+    // Save to NVS
+    nvs_handle_t nvs_handle;
+    nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    nvs_set_str(nvs_handle, WIFI_NVS_KEY_SSID, wifi_ssid);
+    nvs_set_str(nvs_handle, WIFI_NVS_KEY_PASS, wifi_pass);
+    nvs_set_str(nvs_handle, MQTT_NVS_KEY_URL, mqtt_broker_url);
+    nvs_set_i64(nvs_handle, NVS_KEY_SAMPLE_INTERVAL, (int64_t)sample_interval_ms);
+    nvs_commit(nvs_handle);
+    nvs_close(nvs_handle);
+    httpd_resp_sendstr(req, "Saved. Rebooting...");
+    vTaskDelay(1000/portTICK_PERIOD_MS);
+    esp_restart();
+    return ESP_OK;
+}
+
+// HTTP handler for /parameters.html
+esp_err_t parameters_html_handler(httpd_req_t *req) {
+    FILE *f = fopen("/spiffs/parameters.html", "r");
+    if (!f) {
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
+    char buf[512];
+    httpd_resp_set_type(req, "text/html");
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        httpd_resp_send_chunk(req, buf, n);
+    }
+    fclose(f);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+// Captive portal redirect handler
+esp_err_t captive_redirect_handler(httpd_req_t *req) {
+    // If the request is already for /parameters.html, serve it directly
+    if (strcmp(req->uri, "/parameters.html") == 0) {
+        return parameters_html_handler(req);
+    }
+    // Otherwise, redirect to /parameters.html
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/parameters.html");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+static void start_ap_and_captive_portal() {
+    // Start AP mode
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    wifi_config_t ap_config = {
+        .ap = {
+            .ssid = "ESP32-CONFIG",
+            .ssid_len = 0,
+            .password = "",
+            .max_connection = 4,
+            .authmode = WIFI_AUTH_OPEN
+        }
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+
+    // Set AP IP and DHCP
+    esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();
+    esp_netif_ip_info_t ip_info;
+    ip_info.ip.addr = esp_ip4addr_aton("192.168.4.1");
+    ip_info.netmask.addr = esp_ip4addr_aton("255.255.255.0");
+    ip_info.gw.addr = esp_ip4addr_aton("192.168.4.1");
+    esp_netif_dhcps_stop(ap_netif);
+    esp_netif_set_ip_info(ap_netif, &ip_info);
+    esp_netif_dhcps_start(ap_netif);
+
+    ESP_ERROR_CHECK(esp_wifi_start());
+    // Start SPIFFS
+    init_spiffs();
+    // Start HTTP server
+    httpd_handle_t server = NULL;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.uri_match_fn = httpd_uri_match_wildcard;
+    httpd_start(&server, &config);
+    // Register handlers
+    httpd_uri_t params_json = { .uri = "/params.json", .method = HTTP_GET, .handler = params_json_get_handler, .user_ctx = NULL };
+    httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
+    httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
+    httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &params_json);
+    httpd_register_uri_handler(server, &params_update);
+    httpd_register_uri_handler(server, &parameters_html);
+    httpd_register_uri_handler(server, &captive);
+}
+
+void ap_config_task(void *pvParameter) {
+    // Load NVS values before starting AP and HTTP server
+    load_wifi_config_from_nvs();
+    load_mqtt_config_from_nvs();
+    load_sample_interval_from_nvs();
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    start_ap_and_captive_portal();
+    vTaskDelete(NULL);
+}
+
 // Main application entry point.
 void app_main(void) {
+    // Initialize NVS first for all code paths
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
+    gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
+    bool boot_btn_pressed = false;
+    for (int i = 0; i < 1000; ++i) { // 10 seconds, check every 10ms
+        if (gpio_get_level(BOOT_BTN_GPIO) == 0) {
+            boot_btn_pressed = true;
+            ESP_LOGI(TAG, "Boot button press detected during wait!");
+            break;
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    ESP_LOGI(TAG, "Boot button wait finished, continuing startup...");
+    if (boot_btn_pressed) {
+        ESP_LOGI(TAG, "Entering AP config mode due to boot button press.");
+        xTaskCreate(ap_config_task, "ap_config_task", 8192, NULL, 5, NULL);
+        while (1) vTaskDelay(1000/portTICK_PERIOD_MS); // Block forever
+    }
+
     // Initialize UART communication.
     init_uart();
 
-    //Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
     load_wifi_config_from_nvs();
     load_mqtt_config_from_nvs();
+    load_sample_interval_from_nvs();
     ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
     ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
     ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
+    ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta(); // Initialize Wi-Fi
     
@@ -772,9 +969,9 @@ void app_main(void) {
         // Call the function to read and process the actual BMS response.
         read_bms_data(); 
         
-        // Wait for 5 seconds before sending the command again.
-        ESP_LOGI(TAG, "Waiting 5 seconds before next BMS read cycle...");
-        vTaskDelay(pdMS_TO_TICKS(5000)); 
+        // Wait for the configured sample interval before the next cycle.
+        ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
+        vTaskDelay(pdMS_TO_TICKS(sample_interval_ms)); 
     }
 }
 
@@ -795,6 +992,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        printf("Obtained IP address: " IPSTR "\n", IP2STR(&event->ip_info.ip));
         wifi_retry_num = 0;
         // Start MQTT client once IP is obtained
         mqtt_app_start();
@@ -1028,4 +1226,32 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         free(cells_json_string);
     }
     cJSON_Delete(cells_root);
+}
+
+
+// Helper to convert hex char to int
+int hex2int(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return 0;
+}
+
+// URL decode utility (in-place)
+void url_decode(char *dst, const char *src, size_t dstsize) {
+    char a, b;
+    size_t i = 0, j = 0;
+    while (src[i] && j + 1 < dstsize) {
+        if ((src[i] == '%') && ((a = src[i+1]) && (b = src[i+2])) && isxdigit(a) && isxdigit(b)) {
+            if (j < dstsize - 1)
+                dst[j++] = (char)((hex2int(a) << 4) | hex2int(b));
+            i += 3;
+        } else if (src[i] == '+') {
+            dst[j++] = ' ';
+            i++;
+        } else {
+            dst[j++] = src[i++];
+        }
+    }
+    dst[j] = '\0';
 }

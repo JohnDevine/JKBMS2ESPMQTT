@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ESP32 Parameters</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        label { display: block; margin-top: 1em; }
+        input[type=text], input[type=password], input[type=number] { width: 300px; padding: 0.5em; }
+        button { margin-top: 2em; padding: 0.7em 2em; }
+    </style>
+</head>
+<body>
+    <h2>ESP32 Configuration</h2>
+    <form id="paramsForm">
+        <label>WiFi SSID:
+            <input type="text" name="ssid" id="ssid" required>
+        </label>
+        <label>WiFi Password:
+            <input type="password" name="password" id="password" required>
+        </label>
+        <label>MQTT Broker URL:
+            <input type="text" name="mqtt_url" id="mqtt_url" required>
+        </label>
+        <label>Sample Interval (ms):
+            <input type="number" name="sample_interval" id="sample_interval" min="100" max="86400000" required>
+        </label>
+        <button type="submit">Save & Reboot</button>
+    </form>
+    <div id="msg" style="margin-top:1em;color:green;"></div>
+    <script>
+    // Fetch current values via AJAX and populate fields
+    fetch('/params.json').then(r => r.json()).then(cfg => {
+        document.getElementById('ssid').value = cfg.ssid || '';
+        document.getElementById('password').value = cfg.password || '';
+        document.getElementById('mqtt_url').value = cfg.mqtt_url || '';
+        document.getElementById('sample_interval').value = cfg.sample_interval || 5000;
+    });
+
+    // Handle form submit via AJAX
+    document.getElementById('paramsForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new URLSearchParams(new FormData(form)).toString();
+        fetch('/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: data
+        }).then(r => {
+            if (r.ok) {
+                document.getElementById('msg').textContent = 'Saved! Rebooting...';
+                setTimeout(() => location.reload(), 4000);
+            } else {
+                document.getElementById('msg').textContent = 'Error saving!';
+            }
+        }).catch(() => {
+            document.getElementById('msg').textContent = 'Network error!';
+        });
+    });
+    </script>
+</body>
+</html>

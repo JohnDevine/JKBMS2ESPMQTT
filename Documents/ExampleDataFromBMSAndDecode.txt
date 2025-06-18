@@ -1,0 +1,90 @@
+I (72099) BMS_READER: Attempting to read BMS data...
+I (72399) BMS_READER: 255 bytes available in UART buffer.
+I (72399) BMS_READER: Successfully read 255 bytes from UART:
+I (72399) BMS_READER: 4e 57 00 fd 00 00 00 00 06 00 01 79 0c 01 0c ef
+I (72399) BMS_READER: 02 0c ef 03 0c ef 04 0c ef 80 00 20 81 00 1c 82
+I (72409) BMS_READER: 00 1a 83 05 2c 84 00 00 85 62 86 02 87 00 0a 89
+I (72409) BMS_READER: 00 00 0c 9a 8a 00 04 8b 00 00 8c 00 03 8e 05 b4
+I (72419) BMS_READER: 8f 03 e8 90 0e 42 91 0d 7a 92 00 03 93 09 c4 94
+I (72429) BMS_READER: 0b 54 95 00 03 96 01 2c 97 00 b4 98 00 05 99 00
+I (72429) BMS_READER: 55 9a 00 1e 9b 0a 96 9c 00 0a 9d 00 9e 00 50 9f
+I (72439) BMS_READER: 00 41 a0 00 41 a1 00 3c a2 00 14 a3 00 41 a4 00
+I (72439) BMS_READER: 41 a5 00 03 a6 00 0a a7 ff ec a8 ff f6 a9 04 aa
+I (72449) BMS_READER: 00 00 01 40 ab 01 ac 01 ad 03 dc ae 01 af 00 b0
+I (72459) BMS_READER: 00 0a b1 14 b2 31 32 33 34 35 36 00 00 00 00 b3
+I (72459) BMS_READER: 00 b4 53 42 2d 31 32 2d 32 00 b5 32 35 30 31 b6
+I (72469) BMS_READER: 00 01 ba 89 b7 31 31 41 5f 5f 5f 5f 5f 53 31 31
+I (72479) BMS_READER: 2e 35 34 5f b8 00 b9 00 00 01 40 ba 53 42 2d 31
+I (72479) BMS_READER: 32 2d 32 00 00 00 00 00 53 42 2d 31 32 2d 32 00
+I (72489) BMS_READER: 00 00 00 00 c0 01 00 00 00 00 68 00 00 44 c6
+I (72489) BMS_READER: Start frame OK
+I (72499) BMS_READER: Frame length field value: 253
+I (72499) BMS_READER: Calculated CRC sum (16-bit): 17606 (0x44C6)
+I (72509) BMS_READER: Received CRC from frame: 17606 (0x44C6)
+I (72509) BMS_READER: CRC OK
+I (72519) BMS_READER: Payload length: 235 bytes
+I (72519) BMS_READER: Payload HEX:
+I (72519) BMS_READER: 79 0c 01 0c ef 02 0c ef 03 0c ef 04 0c ef 80 00
+I (72529) BMS_READER: 20 81 00 1c 82 00 1a 83 05 2c 84 00 00 85 62 86
+I (72529) BMS_READER: 02 87 00 0a 89 00 00 0c 9a 8a 00 04 8b 00 00 8c
+I (72539) BMS_READER: 00 03 8e 05 b4 8f 03 e8 90 0e 42 91 0d 7a 92 00
+I (72549) BMS_READER: 03 93 09 c4 94 0b 54 95 00 03 96 01 2c 97 00 b4
+I (72549) BMS_READER: 98 00 05 99 00 55 9a 00 1e 9b 0a 96 9c 00 0a 9d
+I (72559) BMS_READER: 00 9e 00 50 9f 00 41 a0 00 41 a1 00 3c a2 00 14
+I (72569) BMS_READER: a3 00 41 a4 00 41 a5 00 03 a6 00 0a a7 ff ec a8
+I (72569) BMS_READER: ff f6 a9 04 aa 00 00 01 40 ab 01 ac 01 ad 03 dc
+I (72579) BMS_READER: ae 01 af 00 b0 00 0a b1 14 b2 31 32 33 34 35 36
+I (72579) BMS_READER: 00 00 00 00 b3 00 b4 53 42 2d 31 32 2d 32 00 b5
+I (72589) BMS_READER: 32 35 30 31 b6 00 01 ba 89 b7 31 31 41 5f 5f 5f
+I (72599) BMS_READER: 5f 5f 53 31 31 2e 35 34 5f b8 00 b9 00 00 01 40
+I (72599) BMS_READER: ba 53 42 2d 31 32 2d 32 00 00 00 00 00 53 42 2d
+I (72609) BMS_READER: 31 32 2d 32 00 00 00 00 00 c0 01
+I (72609) BMS_READER: Cell voltage data byte count from payload: 12, Calculated number of cells: 4
+Cell Voltages (V):
+  Cell  1: 3.311 V
+  Cell  2: 3.311 V
+  Cell  3: 3.311 V
+  Cell  4: 3.311 V
+Min Cell Voltage: 3.311 V
+Max Cell Voltage: 3.311 V
+Cell Voltage Delta: 0.000 V
+MOSFET Temperature: 32.0 C (raw: 32)
+Probe 1 Temperature: 28.0 C (raw: 28)
+Probe 2 Temperature: 26.0 C (raw: 26)
+Total Battery Voltage: 13.24 V (raw: 1324)
+I (72649) BMS_READER: Current parsing: frame_len_field=253, current_raw=0x0000 (0)
+I (72659) BMS_READER: Current (method 2, frame_len_field < 260): -0.00 A
+Current: -0.00 A (raw: 0)
+Remaining Capacity (SOC): 98%
+I (72669) BMS_READER: Decoded Active equalization switch (0x9A): 138
+I (72679) BMS_READER: Decoded Device ID Code (0xB4): 0
+I (72679) BMS_READER: Decoded Device ID Code (0xB4): 0
+I (72689) BMS_READER: Decoded Power tube temperature protection value (0x9B): 2710
+I (72689) BMS_READER: Decoded Temperature protection value in battery box (0x9F): 65
+I (72699) BMS_READER: Decoded Recovery value 2 of battery in box (0xA0): 65
+I (72709) BMS_READER: Decoded Battery temperature difference (0xA1): 60
+I (72709) BMS_READER: Decoded Battery charging 2 high temperature protection value (0xA2): 20
+I (72719) BMS_READER: Decoded High Temperature Protection Value for Battery Charging (0xA3): 65
+I (72729) BMS_READER: Decoded High Temperature Protection Value for Battery Discharge (0xA4): 65
+I (72739) BMS_READER: Decoded Charging cryoprotection value (0xA5): 3
+I (72749) BMS_READER: Decoded Recovery value 2 of charge cryoprotection (0xA6): 10
+I (72749) BMS_READER: Decoded Discharge cryoprotection value (0xA7): 65516
+I (72759) BMS_READER: Decoded Discharge Low Temperature Protection Recovery Value (0xA8): 65526
+I (72769) BMS_READER: Decoded Number of battery strings settings (0xA9): 4
+I (72769) BMS_READER: Decoded Battery Capacity Settings (0xAA): 320
+I (72779) BMS_READER: Decoded Charging MOS switch (0xAB): 1
+I (72789) BMS_READER: Decoded Discharge MOS switch (0xAC): 1
+I (72789) BMS_READER: Decoded Current Calibration (0xAD): 988
+I (72799) BMS_READER: Decoded Protective Board 1 Address (0xAE): 1
+I (72799) BMS_READER: Decoded Battery type (0xAF): 0
+I (72809) BMS_READER: Decoded Sleep Wait Time (0xB0): 10
+I (72809) BMS_READER: Decoded Low Capacity Alarm Value (0xB1): 20
+I (72819) BMS_READER: Decoded Modify parameter password (0xB2): 0
+I (72819) BMS_READER: Decoded Special Charger 1 Switch (0xB3): 0
+I (72829) BMS_READER: Decoded Device ID Code (0xB4): SB-12-20
+I (72839) BMS_READER: Decoded Date of production (0xB5): 25010
+I (72839) BMS_READER: Decoded System working time (0xB6): 113289
+I (72849) BMS_READER: Decoded Software Version Number (0xB7): 11A_____S11.54_0
+I (72849) BMS_READER: Decoded Start Current Calibration (0xB8): 0
+I (72859) BMS_READER: Decoded Actual battery capacity (0xB9): 320
+I (72869) BMS_READER: Decoded Naming of factory ID (0xBA): SB-12-20
