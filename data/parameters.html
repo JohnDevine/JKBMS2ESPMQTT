@@ -3,31 +3,113 @@
 <head>
     <meta charset="UTF-8">
     <title>ESP32 Parameters</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: Arial, sans-serif; margin: 2em; }
-        label { display: block; margin-top: 1em; }
-        input[type=text], input[type=password], input[type=number] { width: 300px; padding: 0.5em; }
-        button { margin-top: 2em; padding: 0.7em 2em; }
+        :root {
+            --primary: #1976d2;
+            --primary-dark: #115293;
+            --background: #f5f7fa;
+            --card-bg: #fff;
+            --border-radius: 16px;
+            --shadow: 0 2px 16px rgba(0,0,0,0.08);
+        }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: var(--background);
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            padding: 2.5em 2em 2em 2em;
+            max-width: 400px;
+            width: 100%;
+        }
+        h2 {
+            color: var(--primary);
+            margin-top: 0;
+            text-align: center;
+        }
+        label {
+            display: block;
+            margin-top: 1.2em;
+            color: #333;
+            font-weight: 500;
+        }
+        input[type=text], input[type=password], input[type=number] {
+            width: 100%;
+            padding: 0.7em;
+            margin-top: 0.3em;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 1em;
+            box-sizing: border-box;
+            background: #f9f9f9;
+            transition: border 0.2s;
+        }
+        input:focus {
+            border: 1.5px solid var(--primary);
+            outline: none;
+        }
+        button {
+            width: 100%;
+            margin-top: 2em;
+            padding: 0.9em 0;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 1px 4px rgba(25, 118, 210, 0.08);
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: var(--primary-dark);
+        }
+        #msg {
+            margin-top: 1.5em;
+            color: green;
+            text-align: center;
+            font-weight: 500;
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 1.2em 0.5em 1.5em 0.5em;
+                max-width: 98vw;
+            }
+            h2 {
+                font-size: 1.3em;
+            }
+        }
     </style>
 </head>
 <body>
-    <h2>ESP32 Configuration</h2>
-    <form id="paramsForm">
-        <label>WiFi SSID:
-            <input type="text" name="ssid" id="ssid" required>
-        </label>
-        <label>WiFi Password:
-            <input type="password" name="password" id="password" required>
-        </label>
-        <label>MQTT Broker URL:
-            <input type="text" name="mqtt_url" id="mqtt_url" required>
-        </label>
-        <label>Sample Interval (ms):
-            <input type="number" name="sample_interval" id="sample_interval" min="100" max="86400000" required>
-        </label>
-        <button type="submit">Save & Reboot</button>
-    </form>
-    <div id="msg" style="margin-top:1em;color:green;"></div>
+    <div class="container">
+        <h2>ESP32 Configuration</h2>
+        <form id="paramsForm">
+            <label>WiFi SSID:
+                <input type="text" name="ssid" id="ssid" required>
+            </label>
+            <label>WiFi Password:
+                <input type="password" name="password" id="password" required>
+            </label>
+            <label>MQTT Broker URL:
+                <input type="text" name="mqtt_url" id="mqtt_url" required>
+            </label>
+            <label>Sample Interval (ms):
+                <input type="number" name="sample_interval" id="sample_interval" min="100" max="86400000" required>
+            </label>
+            <button type="submit">Save & Reboot</button>
+        </form>
+        <div id="msg"></div>
+    </div>
     <script>
     // Fetch current values via AJAX and populate fields
     fetch('/params.json').then(r => r.json()).then(cfg => {

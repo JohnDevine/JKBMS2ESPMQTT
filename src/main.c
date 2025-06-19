@@ -907,14 +907,13 @@ void ap_config_task(void *pvParameter) {
 // Blink task for onboard LED
 #define ONBOARD_LED_GPIO GPIO_NUM_2
 
-void blink_led_task(void *pvParameter) {
+
+// Blink the onboard LED for a short time (heartbeat)
+void blink_heartbeat() {
     gpio_set_direction(ONBOARD_LED_GPIO, GPIO_MODE_OUTPUT);
-    while (1) {
-        gpio_set_level(ONBOARD_LED_GPIO, 1);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        gpio_set_level(ONBOARD_LED_GPIO, 0);
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
+    gpio_set_level(ONBOARD_LED_GPIO, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    gpio_set_level(ONBOARD_LED_GPIO, 0);
 }
 
 // Main application entry point.
@@ -1219,6 +1218,7 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
     } else {
         esp_mqtt_client_publish(mqtt_client, mqtt_topic_pack, pack_json_string, 0, 1, 0);
         ESP_LOGI(TAG, "Published to %s: %s", mqtt_topic_pack, pack_json_string);
+        blink_heartbeat();
         free(pack_json_string);
     }
     cJSON_Delete(pack_root);
@@ -1245,6 +1245,7 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
     } else {
         esp_mqtt_client_publish(mqtt_client, mqtt_topic_cells, cells_json_string, 0, 1, 0);
         ESP_LOGI(TAG, "Published to %s: %s", mqtt_topic_cells, cells_json_string);
+        blink_heartbeat();
         free(cells_json_string);
     }
     cJSON_Delete(cells_root);
@@ -1284,7 +1285,7 @@ void dns_hijack_task(void *pvParameter) {
     if (sock < 0) {
         ESP_LOGE(TAG, "Failed to create DNS socket");
         vTaskDelete(NULL);
-        return;
+               return;
     }
     struct sockaddr_in server_addr = {0};
     server_addr.sin_family = AF_INET;
