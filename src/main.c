@@ -904,6 +904,19 @@ void ap_config_task(void *pvParameter) {
     vTaskDelete(NULL);
 }
 
+// Blink task for onboard LED
+#define ONBOARD_LED_GPIO GPIO_NUM_2
+
+void blink_led_task(void *pvParameter) {
+    gpio_set_direction(ONBOARD_LED_GPIO, GPIO_MODE_OUTPUT);
+    while (1) {
+        gpio_set_level(ONBOARD_LED_GPIO, 1);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        gpio_set_level(ONBOARD_LED_GPIO, 0);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
 // Main application entry point.
 void app_main(void) {
     // Initialize NVS first for all code paths
@@ -913,6 +926,7 @@ void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
 
     ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
     gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
@@ -1314,17 +1328,4 @@ void dns_hijack_task(void *pvParameter) {
     }
     close(sock);
     vTaskDelete(NULL);
-}
-
-// Blink task for onboard LED
-#define ONBOARD_LED_GPIO GPIO_NUM_2
-
-void blink_led_task(void *pvParameter) {
-    gpio_set_direction(ONBOARD_LED_GPIO, GPIO_MODE_OUTPUT);
-    while (1) {
-        gpio_set_level(ONBOARD_LED_GPIO, 1);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        gpio_set_level(ONBOARD_LED_GPIO, 0);
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
 }
