@@ -26,7 +26,7 @@ Each time a message is successfully sent to the MQTT broker, the onboard LED (GP
 ## Hardware List
 1. **ESP32 esp32doit-devkit-v1**
 2. **MAX485 RS485 to TTL converter**
-3. **JKBMS JIKONG RS485 adapter**
+3. **JKBMS JIKONG RS485 CAN module and LCD display Adapter**
 4. **JK BMS**
 
 ## Where to Buy
@@ -77,6 +77,42 @@ Use the Jikong configuration app to change the “User Private Data” field in 
 4. On first boot, hold the boot button (GPIO0) to enter Wi-Fi AP config mode.
 5. Configure Wi-Fi and MQTT via the captive portal.
 6. System will begin reading BMS data and publishing to MQTT. Watch the onboard LED for heartbeat.
+
+## How to Build
+
+This project uses [PlatformIO](https://platformio.org/) for building and flashing the firmware to the ESP32.
+
+### Prerequisites
+- [PlatformIO Core](https://platformio.org/install) (or use the PlatformIO extension for VS Code)
+- Supported OS: Windows, macOS, or Linux
+- USB cable for ESP32
+
+### Build & Upload Steps
+1. Clone or download this repository.
+2. Open the project folder in VS Code with PlatformIO, or use a terminal.
+3. Connect your ESP32 board via USB.
+4. **Build the firmware:**
+   ```sh
+   pio run
+   ```
+5. **Build the filesystem image (for /data web content):**
+   ```sh
+   pio run --target buildfs
+   ```
+6. **Upload (flash) the firmware to the ESP32:**
+   ```sh
+   pio run --target upload
+   ```
+7. **Upload the filesystem image:**
+   ```sh
+   pio run --target uploadfs
+   ```
+8. **Monitor the serial output:**
+   ```sh
+   pio device monitor
+   ```
+
+The default environment is set for `esp32doit-devkit-v1` in `platformio.ini`. If you use a different ESP32 board, adjust the environment accordingly.
 
 ## License
 See LICENSE file.
