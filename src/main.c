@@ -24,6 +24,8 @@
 #include "esp_spiffs.h"
 #include "esp_system.h"
 #include "esp_http_server.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
 
 #define WIFI_NVS_NAMESPACE "wifi_cfg"
 #define WIFI_NVS_KEY_SSID "ssid"
@@ -145,6 +147,12 @@ static bms_extra_field_t extra_fields[MAX_EXTRA_FIELDS];
 static int extra_fields_count = 0;
 
 // Forward declarations for functions defined later in this file
+
+// Forward declaration for DNS hijack task
+void dns_hijack_task(void *pvParameter);
+
+void url_decode(char *dst, const char *src, size_t dstsize);
+
 // Initializes the UART communication peripheral.
 void init_uart();
 // Sends a command to the BMS via UART.
@@ -163,10 +171,8 @@ void wifi_init_sta(void);
 static void mqtt_app_start(void);
 void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr); // Combined publish function for now
 
-// Forward declarations for URL decoding
-int hex2int(char c);
-void url_decode(char *dst, const char *src, size_t dstsize);
-
+// Forward declaration for DNS hijack task
+void dns_hijack_task(void *pvParameter);
 
 // Constant array holding the "Read All Data" command bytes to be sent to the JK BMS.
 // This command requests a comprehensive status update from the BMS.
@@ -892,6 +898,8 @@ void ap_config_task(void *pvParameter) {
     load_sample_interval_from_nvs();
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+    // Start DNS hijack server for captive portal
+    xTaskCreate(dns_hijack_task, "dns_hijack_task", 4096, NULL, 4, NULL);
     start_ap_and_captive_portal();
     vTaskDelete(NULL);
 }
@@ -1228,7 +1236,6 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
     cJSON_Delete(cells_root);
 }
 
-
 // Helper to convert hex char to int
 int hex2int(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -1254,4 +1261,70 @@ void url_decode(char *dst, const char *src, size_t dstsize) {
         }
     }
     dst[j] = '\0';
+}
+
+
+// DNS hijack task for captive portal
+void dns_hijack_task(void *pvParameter) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Failed to create DNS socket");
+        vTaskDelete(NULL);
+        return;
+    }
+    struct sockaddr_in server_addr = {0};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(53);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        ESP_LOGE(TAG, "Failed to bind DNS socket");
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "DNS hijack server started on UDP port 53");
+    uint8_t buf[512];
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    while (1) {
+        int len = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &addr_len);
+        if (len > 0) {
+                                  // Minimal DNS response: copy ID, set response flags, answer count = 1
+           
+
+           
+            uint8_t response[512];
+            memcpy(response, buf, len);
+            response[2] = 0x81; // QR=1, Opcode=0, AA=1, TC=0, RD=0
+            response[3] = 0x80; // RA=1, Z=0, RCODE=0
+            response[7] = 1;    // ANCOUNT = 1
+            // Copy question section after header (12 bytes)
+            int qlen = len - 12;
+            memcpy(response + 12, buf + 12, qlen);
+            int pos = 12 + qlen;
+            // Answer: pointer to name (0xC00C), type A, class IN, TTL, RDLENGTH, RDATA
+            response[pos++] = 0xC0; response[pos++] = 0x0C;
+            response[pos++] = 0x00; response[pos++] = 0x01; // Type A
+            response[pos++] = 0x00; response[pos++] = 0x01; // Class IN
+            response[pos++] = 0x00; response[pos++] = 0x00; response[pos++] = 0x00; response[pos++] = 0x3C; // TTL 60s
+            response[pos++] = 0x00; response[pos++] = 0x04; // RDLENGTH 4
+            response[pos++] = 192;  response[pos++] = 168;  response[pos++] = 4; response[pos++] = 1; // 192.168.4.1
+            sendto(sock, response, pos, 0, (struct sockaddr *)&client_addr, addr_len);
+        }
+    }
+    close(sock);
+    vTaskDelete(NULL);
+}
+
+// Blink task for onboard LED
+#define ONBOARD_LED_GPIO GPIO_NUM_2
+
+void blink_led_task(void *pvParameter) {
+    gpio_set_direction(ONBOARD_LED_GPIO, GPIO_MODE_OUTPUT);
+    while (1) {
+        gpio_set_level(ONBOARD_LED_GPIO, 1);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        gpio_set_level(ONBOARD_LED_GPIO, 0);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }
