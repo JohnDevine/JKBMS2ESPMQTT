@@ -1,0 +1,11 @@
+This explains the ESP end of the pins on the MAX485 breakout board
+NOTE: to enable the reciever you need to pull RE low (earth)
+    to enable the transmitter you need to pull DE high (+3)
+
+    I have only enabled the reciever but I send data and get a response so who knows
+
+Pin  Name              Direction   Description
+RO - Receiver Output - Output -    The data received from the RS-485 bus (A/B) comes out here — connect to your MCU’s RX.
+RE - Receiver Enable - Input -     Active low — pull LOW to enable receiving (activates RO). Pull HIGH to disable the receiver.
+DE - Driver Enable -   Input -     Active high — pull HIGH to enable transmission (activates DI to A/B). Pull LOW to disable transmitter.
+DI - Driver Input -    Input -     The data you want to send goes here — connect to your MCU’s TX.
