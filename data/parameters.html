@@ -106,6 +106,9 @@
             <label>Sample Interval (ms):
                 <input type="number" name="sample_interval" id="sample_interval" min="100" max="86400000" required>
             </label>
+            <label>BMS Topic:
+                <input type="text" name="bms_topic" id="bms_topic" maxlength="40" required>
+            </label>
             <button type="submit">Save & Reboot</button>
         </form>
         <div id="msg"></div>
@@ -117,6 +120,7 @@
         document.getElementById('password').value = cfg.password || '';
         document.getElementById('mqtt_url').value = cfg.mqtt_url || '';
         document.getElementById('sample_interval').value = cfg.sample_interval || 5000;
+        document.getElementById('bms_topic').value = cfg.bms_topic || 'JKBMS';
     });
 
     // Handle form submit via AJAX

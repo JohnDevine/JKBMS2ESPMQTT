@@ -32,14 +32,16 @@
 #define WIFI_NVS_KEY_PASS "pass"
 #define MQTT_NVS_KEY_URL "broker_url"
 #define NVS_KEY_SAMPLE_INTERVAL "sample_interval"
-#define DEFAULT_WIFI_SSID "BAANFARANG_O"
-#define DEFAULT_WIFI_PASS "tAssy@#28"
-#define DEFAULT_MQTT_BROKER_URL "mqtt://192.168.1.5"
+#define NVS_KEY_BMS_TOPIC "BMS_Topic"
+#define DEFAULT_WIFI_SSID "yourSSID"
+#define DEFAULT_WIFI_PASS "yourpassword"
+#define DEFAULT_MQTT_BROKER_URL "mqtt://127.0.0.1"
 #define DEFAULT_SAMPLE_INTERVAL 5000L
 
 static char wifi_ssid[33] = DEFAULT_WIFI_SSID;
 static char wifi_pass[65] = DEFAULT_WIFI_PASS;
 static char mqtt_broker_url[128] = DEFAULT_MQTT_BROKER_URL;
+static char bms_topic[41] = "JKBMS";
 static long sample_interval_ms = DEFAULT_SAMPLE_INTERVAL;
 
 // Define the UART peripheral number to be used (UART2 in this case)
@@ -756,6 +758,28 @@ void load_sample_interval_from_nvs() {
     }
 }
 
+void load_bms_topic_from_nvs() {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        size_t topic_len = sizeof(bms_topic);
+        if (nvs_get_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic, &topic_len) != ESP_OK) {
+            strncpy(bms_topic, "JKBMS", sizeof(bms_topic)-1);
+            nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic);
+        }
+        nvs_close(nvs_handle);
+    }
+}
+
+void save_bms_topic_to_nvs(const char *topic) {
+    nvs_handle_t nvs_handle;
+    if (nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle) == ESP_OK) {
+        nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, topic);
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+    }
+}
+
 // SPIFFS init
 void init_spiffs() {
     esp_vfs_spiffs_conf_t conf = {
@@ -807,6 +831,17 @@ esp_err_t params_update_post_handler(httpd_req_t *req) {
     nvs_set_str(nvs_handle, WIFI_NVS_KEY_PASS, wifi_pass);
     nvs_set_str(nvs_handle, MQTT_NVS_KEY_URL, mqtt_broker_url);
     nvs_set_i64(nvs_handle, NVS_KEY_SAMPLE_INTERVAL, (int64_t)sample_interval_ms);
+    // Use the global bms_topic variable
+    extern char bms_topic[41];
+    char bms_topic_in[41] = "";
+    char bms_topic_dec[41];
+    char *bms_topic_ptr = strstr(buf, "bms_topic=");
+    if (bms_topic_ptr) {
+        sscanf(bms_topic_ptr + 10, "%40[^&]", bms_topic_in);
+        url_decode(bms_topic_dec, bms_topic_in, sizeof(bms_topic_dec));
+        strncpy(bms_topic, bms_topic_dec, sizeof(bms_topic)-1);
+    }
+    nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic);
     nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
     httpd_resp_sendstr(req, "Saved. Rebooting...");
@@ -951,9 +986,11 @@ void app_main(void) {
     load_wifi_config_from_nvs();
     load_mqtt_config_from_nvs();
     load_sample_interval_from_nvs();
+    load_bms_topic_from_nvs();
     ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
     ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
     ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
+    ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
     ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta(); // Initialize Wi-Fi
@@ -1009,6 +1046,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             ESP_LOGI(TAG, "retry to connect to the AP");
         } else {
             ESP_LOGI(TAG, "connect to the AP fail");
+            ESP_LOGW(TAG, "WiFi SSID used: %s", wifi_ssid);
+            ESP_LOGW(TAG, "WiFi Password used: %s", wifi_pass);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
@@ -1133,122 +1172,95 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
 
     ESP_LOGI(TAG, "Preparing to publish BMS data via MQTT...");
 
-    // --- Determine topic prefix from Naming of factory ID ---
-    char topic_prefix[128] = "BMS/";
-    for (int i = 0; i < extra_fields_count; ++i) {
-        if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
-            // Find the field name for this id
-            for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
-                if (bms_idcodes[j].id == extra_fields[i].id && strcmp(bms_idcodes[j].name, "Naming of factory ID") == 0) {
-                    strncat(topic_prefix, extra_fields[i].strval, sizeof(topic_prefix) - strlen(topic_prefix) - 2); // leave space for '/\0'
-                    size_t len = strlen(topic_prefix);
-                    if (len < sizeof(topic_prefix) - 1 && topic_prefix[len-1] != '/') {
-                        topic_prefix[len] = '/';
-                        topic_prefix[len+1] = '\0';
-                    }
-                    break;
-                }
-            }
-        }
-    }
+    // --- Determine topic prefix ---
+    const char *topic_prefix = "BMS/";
     char mqtt_topic_pack[160];
     char mqtt_topic_cells[160];
     snprintf(mqtt_topic_pack, sizeof(mqtt_topic_pack), "%spack", topic_prefix);
     snprintf(mqtt_topic_cells, sizeof(mqtt_topic_cells), "%scells", topic_prefix);
 
 
-    // --- Create JSON for NodeJKBMS2/pack ---
-    cJSON *pack_root = cJSON_CreateObject();
-    if (pack_root == NULL) {
-        ESP_LOGE(TAG, "Failed to create cJSON object for pack data.");
+    // --- Create a single JSON object for all BMS data ---
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        ESP_LOGE(TAG, "Failed to create cJSON root object.");
         return;
     }
 
-    cJSON_AddNumberToObject(pack_root, "packV", bms_data_ptr->pack_voltage);
-    cJSON_AddNumberToObject(pack_root, "packA", bms_data_ptr->pack_current);
-    // Add other pack-specific fields here as they become available in bms_data_ptr
-    // For example:
-    // cJSON_AddNumberToObject(pack_root, "packRateCap", bms_data_ptr->pack_rate_cap);
-    cJSON_AddNumberToObject(pack_root, "packNumberOfCells", bms_data_ptr->num_cells);
-    // ... protectionStatus, packNumberCycles, etc. will be added later
-    cJSON_AddNumberToObject(pack_root, "packSOC", bms_data_ptr->soc_percent);
-    
-    // Example for tempSensorValues (assuming NTC0=mosfet, NTC1=probe1, NTC2=probe2 for now)
-    cJSON *temp_sensors = cJSON_CreateObject();
-    if (temp_sensors) {
-        cJSON_AddNumberToObject(temp_sensors, "NTC0", bms_data_ptr->mosfet_temp);
-        cJSON_AddNumberToObject(temp_sensors, "NTC1", bms_data_ptr->probe1_temp);
-        cJSON_AddNumberToObject(temp_sensors, "NTC2", bms_data_ptr->probe2_temp); // If probe2 exists
-        cJSON_AddItemToObject(pack_root, "tempSensorValues", temp_sensors);
-    }
-
-
-    // --- Add all extra decoded fields to MQTT JSON output (handle ASCII fields as strings) ---
-    for (int i = 0; i < extra_fields_count; ++i) {
-        const char *field_name = NULL;
-        for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
-            if (bms_idcodes[j].id == extra_fields[i].id) {
-                field_name = bms_idcodes[j].name;
-                break;
-            }
+    // Add pack data
+    cJSON *pack_root = cJSON_CreateObject();
+    if (pack_root) {
+        cJSON_AddNumberToObject(pack_root, "packV", bms_data_ptr->pack_voltage);
+        cJSON_AddNumberToObject(pack_root, "packA", bms_data_ptr->pack_current);
+        cJSON_AddNumberToObject(pack_root, "packNumberOfCells", bms_data_ptr->num_cells);
+        cJSON_AddNumberToObject(pack_root, "packSOC", bms_data_ptr->soc_percent);
+        cJSON *temp_sensors = cJSON_CreateObject();
+        if (temp_sensors) {
+            cJSON_AddNumberToObject(temp_sensors, "NTC0", bms_data_ptr->mosfet_temp);
+            cJSON_AddNumberToObject(temp_sensors, "NTC1", bms_data_ptr->probe1_temp);
+            cJSON_AddNumberToObject(temp_sensors, "NTC2", bms_data_ptr->probe2_temp);
+            cJSON_AddItemToObject(pack_root, "tempSensorValues", temp_sensors);
         }
-        if (field_name) {
-            char sanitized[64];
-            int si = 0;
-            for (int k = 0; field_name[k] && si < 63; ++k) {
-                char c = field_name[k];
-                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-                    sanitized[si++] = c;
-                } else if (c == ' ' || c == '-' || c == '/' || c == '%') {
-                    sanitized[si++] = '_';
+        // Add extra fields
+        for (int i = 0; i < extra_fields_count; ++i) {
+            const char *field_name = NULL;
+            for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
+                if (bms_idcodes[j].id == extra_fields[i].id) {
+                    field_name = bms_idcodes[j].name;
+                    break;
                 }
             }
-            sanitized[si] = '\0';
-            if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
-                cJSON_AddStringToObject(pack_root, sanitized, extra_fields[i].strval);
-            } else {
-                cJSON_AddNumberToObject(pack_root, sanitized, extra_fields[i].value);
+            if (field_name) {
+                char sanitized[64];
+                int si = 0;
+                for (int k = 0; field_name[k] && si < 63; ++k) {
+                    char c = field_name[k];
+                    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                        sanitized[si++] = c;
+                    } else if (c == ' ' || c == '-' || c == '/' || c == '%') {
+                        sanitized[si++] = '_';
+                    }
+                }
+                sanitized[si] = '\0';
+                if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
+                    cJSON_AddStringToObject(pack_root, sanitized, extra_fields[i].strval);
+                } else {
+                    cJSON_AddNumberToObject(pack_root, sanitized, extra_fields[i].value);
+                }
             }
         }
+        cJSON_AddItemToObject(root, "pack", pack_root);
     }
-    // --- Publish using dynamic topic prefix ---
-    char *pack_json_string = cJSON_PrintUnformatted(pack_root);
-    if (pack_json_string == NULL) {
-        ESP_LOGE(TAG, "Failed to print pack cJSON to string.");
-    } else {
-        esp_mqtt_client_publish(mqtt_client, mqtt_topic_pack, pack_json_string, 0, 1, 0);
-        ESP_LOGI(TAG, "Published to %s: %s", mqtt_topic_pack, pack_json_string);
-        blink_heartbeat();
-        free(pack_json_string);
-    }
-    cJSON_Delete(pack_root);
 
-    // --- Create JSON for cells and publish ---
+    // Add cells data
     cJSON *cells_root = cJSON_CreateObject();
-    if (cells_root == NULL) {
-        ESP_LOGE(TAG, "Failed to create cJSON object for cells data.");
-        return;
+    if (cells_root) {
+        char cell_mv_key[16];
+        char cell_v_key[16];
+        for (int i = 0; i < bms_data_ptr->num_cells; i++) {
+            float cell_v = bms_data_ptr->cell_voltages[i];
+            int cell_mv = (int)(cell_v * 1000);
+            snprintf(cell_mv_key, sizeof(cell_mv_key), "cell%dmV", i);
+            snprintf(cell_v_key, sizeof(cell_v_key), "cell%dV", i);
+            cJSON_AddNumberToObject(cells_root, cell_mv_key, cell_mv);
+            cJSON_AddNumberToObject(cells_root, cell_v_key, cell_v);
+        }
+        cJSON_AddItemToObject(root, "cells", cells_root);
     }
-    char cell_mv_key[16];
-    char cell_v_key[16];
-    for (int i = 0; i < bms_data_ptr->num_cells; i++) {
-        float cell_v = bms_data_ptr->cell_voltages[i]; 
-        int cell_mv = (int)(cell_v * 1000);
-        snprintf(cell_mv_key, sizeof(cell_mv_key), "cell%dmV", i);
-        snprintf(cell_v_key, sizeof(cell_v_key), "cell%dV", i);
-        cJSON_AddNumberToObject(cells_root, cell_mv_key, cell_mv);
-        cJSON_AddNumberToObject(cells_root, cell_v_key, cell_v);
-    }
-    char *cells_json_string = cJSON_PrintUnformatted(cells_root);
-    if (cells_json_string == NULL) {
-        ESP_LOGE(TAG, "Failed to print cells cJSON to string.");
+
+    // Publish as a single topic
+    char *json_string = cJSON_PrintUnformatted(root);
+    if (json_string == NULL) {
+        ESP_LOGE(TAG, "Failed to print combined cJSON to string.");
     } else {
-        esp_mqtt_client_publish(mqtt_client, mqtt_topic_cells, cells_json_string, 0, 1, 0);
-        ESP_LOGI(TAG, "Published to %s: %s", mqtt_topic_cells, cells_json_string);
+        char topic[64];
+        snprintf(topic, sizeof(topic), "BMS/%s", bms_topic);
+        esp_mqtt_client_publish(mqtt_client, topic, json_string, 0, 1, 0);
+        ESP_LOGI(TAG, "Published to %s: %s", topic, json_string);
         blink_heartbeat();
-        free(cells_json_string);
+        free(json_string);
     }
-    cJSON_Delete(cells_root);
+    cJSON_Delete(root);
 }
 
 // Helper to convert hex char to int

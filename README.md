@@ -8,7 +8,7 @@ This firmware enables an ESP32 (esp32doit-devkit-v1) to interface with a JK BMS 
 - Publishes battery data to MQTT topics
 - Heartbeat: onboard LED blinks each time a message is sent to MQTT (visual confirmation of operation)
 - Captive portal for Wi-Fi and MQTT configuration
-- MQTT topic prefix is settable via the BMS “User Private Data” field
+- MQTT topic is configurable via the web interface (see below)
 
 ## Heartbeat LED
 Each time a message is successfully sent to the MQTT broker, the onboard LED (GPIO2) will blink briefly. This provides a visual heartbeat to indicate the system is running and communicating.
@@ -31,7 +31,6 @@ Each time a message is successfully sent to the MQTT broker, the onboard LED (GP
 
 ## Where to Buy
 
-
 I just found this on AliExpress: THB229.89 | 1-10pcs ESP32 WROOM-32 ESP32-S Development Board WiFi+Bluetooth-compatible TYPE-C ESP32 30Pin ESP32 Nodemcu Development Module  
 https://a.aliexpress.com/_oDbdH0o
 
@@ -44,11 +43,12 @@ https://a.aliexpress.com/_oF9ias4
 I just found this on AliExpress: THB1,736.96 | Jikong JK BMS 4s 5s 6s 7s 8s 100a 200a Smart Lifepo4 Li-ion Active Balance Lithium 24v With Bt Heat Function Equalizer On Sale  
 https://a.aliexpress.com/_oClgBbe
 
-
 ## Configuration & Usage
 
-### 1. Set MQTT Topic Prefix
-Use the Jikong configuration app to change the “User Private Data” field in your JK BMS. The MQTT topic will be `BMS/` plus the contents of this field. For example, if you set "MyPack", the topic will be `BMS/MyPack/pack` and `BMS/MyPack/cells`.
+### 1. Set MQTT Topic (BMS Topic)
+- The MQTT topic used for publishing is now fully configurable via the web interface (captive portal).
+- On the configuration page, set the **BMS Topic** field. The firmware will publish to the topic `BMS/<YourTopic>` (e.g., `BMS/MyBattery`).
+- The topic is stored in NVS and persists across reboots.
 
 ### 2. Wi-Fi & MQTT Setup (Captive Portal)
 - On boot, if the boot button (GPIO0) is pressed within 10 seconds, the ESP32 will enter Wi-Fi Access Point mode.
@@ -58,12 +58,13 @@ Use the Jikong configuration app to change the “User Private Data” field in 
   - Wi-Fi Password
   - MQTT Broker URL (e.g., `mqtt://192.168.1.23`)
   - Sample interval (milliseconds between each BMS read)
+  - **BMS Topic** (see above)
 - Save and reboot to apply settings.
 
 ### 3. Operation
 - After booting, the ESP32 will connect to your Wi-Fi and MQTT broker.
 - The onboard LED (GPIO2) will flash briefly each time a message is posted to the MQTT server—this is your heartbeat indicator.
-- Data is published to MQTT topics with the prefix you set in the BMS.
+- Data is published to the topic you set in the configuration page (e.g., `BMS/MyBattery`).
 
 ### 4. Additional Notes
 - Ensure all hardware is wired as described above.
@@ -73,10 +74,9 @@ Use the Jikong configuration app to change the “User Private Data” field in 
 ## Quick Start
 1. Wire up the hardware as described above.
 2. Flash the firmware to your ESP32.
-3. Configure the BMS “User Private Data” field for your desired MQTT topic prefix.
-4. On first boot, hold the boot button (GPIO0) to enter Wi-Fi AP config mode.
-5. Configure Wi-Fi and MQTT via the captive portal.
-6. System will begin reading BMS data and publishing to MQTT. Watch the onboard LED for heartbeat.
+3. On first boot, hold the boot button (GPIO0) to enter Wi-Fi AP config mode.
+4. Configure Wi-Fi, MQTT, and BMS Topic via the captive portal.
+5. System will begin reading BMS data and publishing to MQTT. Watch the onboard LED for heartbeat.
 
 ## How to Build
 
