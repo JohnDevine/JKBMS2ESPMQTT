@@ -1,0 +1,475 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Dashboard for showing 1 or 2 BMS inputs.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 5,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "fephy7x7726f4d"
+      },
+      "description": "The current voltage of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red"
+              },
+              {
+                "color": "green",
+                "value": 12.8
+              },
+              {
+                "color": "#EAB839",
+                "value": 13.4
+              },
+              {
+                "color": "red",
+                "value": 13.6
+              }
+            ]
+          },
+          "unit": "volt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "12.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "fephy7x7726f4d"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "$__interval"
+              ],
+              "type": "time"
+            },
+            {
+              "params": [
+                "null"
+              ],
+              "type": "fill"
+            }
+          ],
+          "measurement": "BMS",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::field = 'SB-12-1') AND $timeFilter GROUP BY time($__interval) fill(null)",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "pack_packV"
+                ],
+                "type": "field"
+              },
+              {
+                "params": [],
+                "type": "last"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "pack_Naming_of_factory_ID::tag",
+              "operator": "=~",
+              "value": "/^$factory_id$/"
+            }
+          ]
+        }
+      ],
+      "title": "Voltage (${factory_id})",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "fephy7x7726f4d"
+      },
+      "description": "The two BMS voltages mapped together. Most times they should be identical.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "red",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisBorderShow": true,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisGridShow": true,
+            "axisLabel": "Voltage",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "hue",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "volt"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "(SB-12-2)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 20,
+        "x": 4,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.0",
+      "targets": [
+        {
+          "alias": "(${factory_id})",
+          "groupBy": [],
+          "measurement": "BMS",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE $timeFilter",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "pack_packV"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "pack_Naming_of_factory_ID::tag",
+              "operator": "=~",
+              "value": "/^$factory_id$/"
+            }
+          ]
+        },
+        {
+          "alias": "(${factory_id_2})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "fephy7x7726f4d"
+          },
+          "groupBy": [],
+          "hide": false,
+          "measurement": "BMS",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id_2$/) AND $timeFilter",
+          "rawQuery": false,
+          "refId": "B",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "pack_packV"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "pack_Naming_of_factory_ID::tag",
+              "operator": "=~",
+              "value": "/^$factory_id_2$/"
+            }
+          ]
+        }
+      ],
+      "title": "Historical Voltage Comparison",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "fephy7x7726f4d"
+      },
+      "description": "The current voltage of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red"
+              },
+              {
+                "color": "green",
+                "value": 12.8
+              },
+              {
+                "color": "#EAB839",
+                "value": 13.4
+              },
+              {
+                "color": "red",
+                "value": 13.6
+              }
+            ]
+          },
+          "unit": "volt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 4
+      },
+      "id": 1,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "12.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "fephy7x7726f4d"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "$__interval"
+              ],
+              "type": "time"
+            },
+            {
+              "params": [
+                "null"
+              ],
+              "type": "fill"
+            }
+          ],
+          "measurement": "BMS",
+          "orderByTime": "ASC",
+          "policy": "default",
+          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::field =~ /^$factory_id$/) AND $timeFilter GROUP BY time($__interval) fill(null)",
+          "rawQuery": false,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "pack_packV"
+                ],
+                "type": "field"
+              },
+              {
+                "params": [],
+                "type": "last"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "pack_Naming_of_factory_ID::tag",
+              "operator": "=~",
+              "value": "/^$factory_id_2$/"
+            }
+          ]
+        }
+      ],
+      "title": "Voltage (${factory_id_2})",
+      "type": "gauge"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "SB-12-2",
+          "value": "SB-12-2"
+        },
+        "definition": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
+        "description": "The name of the BMS .. comes from \"User Private Data\" in BMS setup",
+        "label": "BMS name 1",
+        "name": "factory_id",
+        "options": [],
+        "query": {
+          "query": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
+          "refId": "InfluxVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "SB-12-2",
+          "value": "SB-12-2"
+        },
+        "definition": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
+        "description": "The name of the BMS .. comes from \"User Private Data\" in BMS setup",
+        "label": "BMS name 2",
+        "name": "factory_id_2",
+        "options": [],
+        "query": {
+          "query": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
+          "refId": "InfluxVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-12h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Dual BMS",
+  "uid": "f9e79c9b-9e43-4477-a02b-8198afc586c4",
+  "version": 29
+}
