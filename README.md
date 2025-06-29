@@ -159,3 +159,39 @@ This feature guarantees robust, unattended operation by automatically recovering
 - System software hangs or deadlocks
 
 **No user configuration required** — the watchdog operates automatically based on your sample interval setting.
+
+## Debug Logging
+
+The firmware includes a debug logging control to manage serial output verbosity for development and troubleshooting.
+
+### Debug Logging Control
+- **Location:** `src/main.c`, line ~40
+- **Variable:** `static bool debug_logging = false;`
+- **Default:** Disabled (`false`) for production use
+
+### What It Controls
+When `debug_logging = true`, the following additional logs are enabled:
+- BMS command transmission details
+- UART echo handling information
+- BMS data read cycle timing
+- Sample interval wait messages
+
+### Always Active (Independent of Debug Flag)
+The following logs are **always** shown regardless of the debug setting:
+- **Watchdog logs:** Timeout values, enable/disable status, timeout events
+- **System startup:** Initialization, configuration values, Wi-Fi connection
+- **MQTT events:** Connection status, publish confirmations, errors
+- **Critical errors:** BMS communication failures, system issues
+
+### How to Enable Debug Logging
+1. Open `src/main.c`
+2. Find the line: `static bool debug_logging = false;`
+3. Change to: `static bool debug_logging = true;`
+4. Rebuild and upload the firmware: `pio run --target upload`
+
+### When to Use
+- **Production/Normal Use:** Keep disabled (`false`) for cleaner logs
+- **Development/Troubleshooting:** Enable (`true`) for detailed operation information
+- **System Monitoring:** Watchdog and critical logs are always visible
+
+This approach ensures essential system information is always logged while allowing detailed debugging when needed.
