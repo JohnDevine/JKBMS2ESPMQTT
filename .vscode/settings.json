@@ -1,6 +1,7 @@
 {
     "files.associations": {
-        "*.mmd": "markdown"
+        "*.mmd": "markdown",
+        "uart.h": "c"
     },
     "workbench.editorAssociations": {
         "*.pdf": "pdfViewer.PDFEdit"

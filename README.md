@@ -1,17 +1,21 @@
 # JKBMS2ESPMQTT Firmware
 
 ## Overview
-This firmware enables an ESP32 (esp32doit-devkit-v1) to interface with a JK BMS (Jikong) over RS485, collect battery data, and publish it to an MQTT broker. The system is designed for robust, hands-off operation, with a heartbeat LED blink each time a message is sent to MQTT.
+This firmware enables an ESP32 (esp32doit-devkit-v1) to interface with a JK BMS (Jikong) over RS485, collect battery data, and publish it to an MQTT broker. The system is designed for robust, hands-off operation, with a heartbeat LED that flashes only on successful MQTT publishes and an automatic software watchdog for system recovery.
 
 ## Features
 - Reads data from JK BMS via RS485 (using MAX485 module)
 - Publishes battery data to MQTT topics
-- Heartbeat: onboard LED blinks each time a message is sent to MQTT (visual confirmation of operation)
+- Heartbeat: onboard LED flashes only on successful MQTT publish (visual confirmation of communication)
 - Captive portal for Wi-Fi and MQTT configuration
 - MQTT topic is configurable via the web interface (see below)
+- **Software watchdog timer** for automatic system recovery from communication failures
 
 ## Heartbeat LED
-Each time a message is successfully sent to the MQTT broker, the onboard LED (GPIO2) will blink briefly. This provides a visual heartbeat to indicate the system is running and communicating.
+The onboard LED (GPIO2) provides visual confirmation of system health:
+- **LED Flash:** Occurs **only** when an MQTT message is successfully published and confirmed by the broker
+- **No Flash:** Indicates MQTT communication issues (network problems, broker unavailable, etc.)
+- **Reliability:** Combined with the software watchdog, this provides both visual monitoring and automatic recovery capabilities
 
 ## Pin Usage
 | Signal         | ESP32 Pin      | Description                       |
@@ -63,8 +67,9 @@ https://a.aliexpress.com/_oClgBbe
 
 ### 3. Operation
 - After booting, the ESP32 will connect to your Wi-Fi and MQTT broker.
-- The onboard LED (GPIO2) will flash briefly each time a message is posted to the MQTT server—this is your heartbeat indicator.
+- The onboard LED (GPIO2) will flash briefly **only when a message is successfully published** to the MQTT server—this is your heartbeat indicator.
 - Data is published to the topic you set in the configuration page (e.g., `BMS/MyBattery`).
+- The software watchdog automatically monitors system health and will reboot if MQTT communication fails for too long.
 
 ### 4. Additional Notes
 - Ensure all hardware is wired as described above.
@@ -116,3 +121,41 @@ The default environment is set for `esp32doit-devkit-v1` in `platformio.ini`. If
 
 ## License
 See LICENSE file.
+
+## Software Watchdog Timer (System Reliability)
+
+This firmware includes a robust software watchdog timer to ensure the ESP32 remains responsive and automatically recovers from communication failures, network issues, or system hangs.
+
+### How It Works
+- **Timeout Calculation:** The watchdog timeout is set to **10× the sample interval** (as configured in the captive portal, in milliseconds).
+- **Automatic Enable/Disable:** 
+  - **Enabled** when sample interval > 10,000 ms (10 seconds)
+  - **Disabled** when sample interval ≤ 10,000 ms (for safety with frequent sampling)
+- **Reset Condition:** The watchdog timer is reset **only after successful MQTT publish confirmation** (`MQTT_EVENT_PUBLISHED`).
+- **Timeout Action:** If no successful MQTT publish occurs within the timeout period, the ESP32 will automatically reboot and restart from the beginning (including the 10-second boot button wait).
+
+### Examples
+| Sample Interval | Watchdog Status | Timeout Period | 
+|-----------------|----------------|----------------|
+| 5,000 ms (5s)   | Disabled       | N/A            |
+| 15,000 ms (15s) | Enabled        | 150,000 ms (2.5 min) |
+| 30,000 ms (30s) | Enabled        | 300,000 ms (5 min) |
+| 60,000 ms (1m)  | Enabled        | 600,000 ms (10 min) |
+
+### Visual Feedback
+- **LED Heartbeat:** The onboard LED (GPIO2) flashes **only** when an MQTT publish is successful, providing visual confirmation of system health.
+- **No Flash:** If the LED stops flashing, it indicates MQTT communication issues, and the watchdog will eventually trigger a recovery reboot.
+
+### Logging
+- Watchdog status and timeout values are logged at startup.
+- Timeout events are logged before system restart for troubleshooting.
+- Most debug logging is conditional to reduce serial output volume, but watchdog logs are always active.
+
+### Purpose
+This feature guarantees robust, unattended operation by automatically recovering from:
+- Network connectivity issues
+- MQTT broker unavailability
+- BMS communication failures
+- System software hangs or deadlocks
+
+**No user configuration required** — the watchdog operates automatically based on your sample interval setting.

@@ -27,6 +27,18 @@
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 
+// Watchdog timer includes
+#include "esp_task_wdt.h"
+
+// Software watchdog variables
+static uint32_t watchdog_timeout_ms = 0;  // Watchdog timeout (10× sample interval)
+static TickType_t last_successful_publish = 0;  // Last successful MQTT publish time
+static bool watchdog_enabled = false;  // Whether watchdog is enabled
+static bool mqtt_publish_success = false;  // Flag for successful MQTT publish
+
+// Debug logging flag - set to false to reduce log output (except watchdog logs)
+static bool debug_logging = false;
+
 #define WIFI_NVS_NAMESPACE "wifi_cfg"
 #define WIFI_NVS_KEY_SSID "ssid"
 #define WIFI_NVS_KEY_PASS "pass"
@@ -961,6 +973,22 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    // Configure Task Watchdog Timer
+    ESP_LOGI(TAG, "Configuring Task Watchdog Timer...");
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 30000, // 30 second timeout
+        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all cores
+        .trigger_panic = true // Trigger panic on timeout
+    };
+    esp_err_t twdt_err = esp_task_wdt_init(&twdt_config);
+    if (twdt_err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGI(TAG, "Task Watchdog Timer already initialized");
+    } else {
+        ESP_ERROR_CHECK(twdt_err);
+        ESP_LOGI(TAG, "Task Watchdog Timer initialized successfully");
+    }
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); // Add current task to watchdog
+    ESP_LOGI(TAG, "Task Watchdog Timer configured successfully");
 
     ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
     gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
@@ -971,13 +999,20 @@ void app_main(void) {
             ESP_LOGI(TAG, "Boot button press detected during wait!");
             break;
         }
+        // Feed watchdog every 100 iterations (1 second)
+        if (i % 100 == 0) {
+            esp_task_wdt_reset();
+        }
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
     ESP_LOGI(TAG, "Boot button wait finished, continuing startup...");
     if (boot_btn_pressed) {
         ESP_LOGI(TAG, "Entering AP config mode due to boot button press.");
         xTaskCreate(ap_config_task, "ap_config_task", 8192, NULL, 5, NULL);
-        while (1) vTaskDelay(1000/portTICK_PERIOD_MS); // Block forever
+        while (1) {
+            esp_task_wdt_reset(); // Feed watchdog in config mode
+            vTaskDelay(1000/portTICK_PERIOD_MS); // Block forever
+        }
     }
 
     // Initialize UART communication.
@@ -995,12 +1030,46 @@ void app_main(void) {
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta(); // Initialize Wi-Fi
     
+    // Initialize software watchdog
+    // Watchdog timeout is 10× sample interval (in ms), disabled if ≤10,000 ms
+    if (sample_interval_ms > 10000) {
+        watchdog_timeout_ms = sample_interval_ms * 10;
+        watchdog_enabled = true;
+        last_successful_publish = xTaskGetTickCount();
+        ESP_LOGI(TAG, "Software watchdog enabled with timeout: %lu ms (10× sample interval)", watchdog_timeout_ms);
+    } else {
+        watchdog_enabled = false;
+        ESP_LOGI(TAG, "Software watchdog disabled (sample interval ≤10,000 ms)");
+    }
+    
     // Buffer to attempt to read and discard UART echo. Size of the command sent.
     uint8_t echo_buf[sizeof(bms_read_all_cmd)]; 
 
     // Main loop to periodically send command and read response from BMS.
     while (1) {
-        ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
+        // Feed the watchdog at the start of each cycle
+        esp_task_wdt_reset();
+        
+        // Check software watchdog timeout
+        if (watchdog_enabled) {
+            TickType_t current_time = xTaskGetTickCount();
+            TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
+            
+            if (elapsed_ms >= watchdog_timeout_ms) {
+                ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", 
+                         elapsed_ms, watchdog_timeout_ms);
+                ESP_LOGE(TAG, "Forcing system restart...");
+                vTaskDelay(pdMS_TO_TICKS(100)); // Brief delay to ensure log is output
+                esp_restart(); // Force system restart
+            }
+        }
+        
+        // Reset MQTT publish success flag for this cycle
+        mqtt_publish_success = false;
+        
+        if (debug_logging) {
+            ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
+        }
         // Send the pre-defined "Read All Data" command to the BMS.
         send_bms_command(bms_read_all_cmd, sizeof(bms_read_all_cmd));
         
@@ -1008,18 +1077,26 @@ void app_main(void) {
         // The command is 21 bytes. At 115200 baud, transmission time is ~1.82ms.
         // Echo should appear very shortly after transmission completes.
         // A short timeout (e.g., 20ms) for uart_read_bytes should be sufficient for echo.
-        ESP_LOGI(TAG, "Attempting to read and discard echo (%d bytes) with 20ms timeout...", (int)sizeof(bms_read_all_cmd));
+        if (debug_logging) {
+            ESP_LOGI(TAG, "Attempting to read and discard echo (%d bytes) with 20ms timeout...", (int)sizeof(bms_read_all_cmd));
+        }
         // Try to read exactly the number of bytes sent (the echo).
         int echo_read_len = uart_read_bytes(UART_NUM, echo_buf, sizeof(bms_read_all_cmd), pdMS_TO_TICKS(20));
 
         if (echo_read_len == sizeof(bms_read_all_cmd)) {
-            ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
+            if (debug_logging) {
+                ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
+            }
             // ESP_LOG_BUFFER_HEX(TAG, echo_buf, echo_read_len); // Optional: log the echo if needed for debugging.
         } else if (echo_read_len > 0) {
-            ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", 
-                     echo_read_len, (int)sizeof(bms_read_all_cmd));
+            if (debug_logging) {
+                ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", 
+                         echo_read_len, (int)sizeof(bms_read_all_cmd));
+            }
         } else { // echo_read_len <= 0 (0 means timeout, -1 means error from uart_read_bytes)
-            ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
+            if (debug_logging) {
+                ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
+            }
         }
         // Even if this dedicated echo read fails or is partial, the `read_bms_data` function
         // has its own logic to detect and skip leading echo bytes in the main data buffer.
@@ -1028,8 +1105,23 @@ void app_main(void) {
         read_bms_data(); 
         
         // Wait for the configured sample interval before the next cycle.
-        ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
-        vTaskDelay(pdMS_TO_TICKS(sample_interval_ms)); 
+        if (debug_logging) {
+            ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
+        }
+        
+        // For long delays, feed watchdog periodically during the wait
+        if (sample_interval_ms > 5000) {
+            // Break long delays into chunks and feed watchdog
+            uint32_t remaining_ms = sample_interval_ms;
+            while (remaining_ms > 0) {
+                uint32_t chunk_ms = (remaining_ms > 5000) ? 5000 : remaining_ms;
+                vTaskDelay(pdMS_TO_TICKS(chunk_ms));
+                esp_task_wdt_reset(); // Feed watchdog every 5 seconds max
+                remaining_ms -= chunk_ms;
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(sample_interval_ms)); 
+        } 
     }
 }
 
@@ -1123,6 +1215,14 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
+        // Reset software watchdog on successful MQTT publish
+        if (watchdog_enabled) {
+            last_successful_publish = xTaskGetTickCount();
+            mqtt_publish_success = true;
+            ESP_LOGI(TAG, "Software watchdog reset after successful MQTT publish");
+        }
+        // Flash LED only on successful publish
+        blink_heartbeat();
         break;
     case MQTT_EVENT_DATA: // Incoming data event (if subscribed)
         ESP_LOGI(TAG, "MQTT_EVENT_DATA");
@@ -1257,7 +1357,6 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         snprintf(topic, sizeof(topic), "BMS/%s", bms_topic);
         esp_mqtt_client_publish(mqtt_client, topic, json_string, 0, 1, 0);
         ESP_LOGI(TAG, "Published to %s: %s", topic, json_string);
-        blink_heartbeat();
         free(json_string);
     }
     cJSON_Delete(root);
@@ -1293,9 +1392,13 @@ void url_decode(char *dst, const char *src, size_t dstsize) {
 
 // DNS hijack task for captive portal
 void dns_hijack_task(void *pvParameter) {
+    // Add this task to watchdog monitoring
+    esp_task_wdt_add(NULL);
+    
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         ESP_LOGE(TAG, "Failed to create DNS socket");
+        esp_task_wdt_delete(NULL);
         vTaskDelete(NULL);
                return;
     }
@@ -1306,6 +1409,7 @@ void dns_hijack_task(void *pvParameter) {
     if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         ESP_LOGE(TAG, "Failed to bind DNS socket");
         close(sock);
+        esp_task_wdt_delete(NULL);
         vTaskDelete(NULL);
         return;
     }
@@ -1313,6 +1417,7 @@ void dns_hijack_task(void *pvParameter) {
     uint8_t buf[512];
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
+    uint32_t dns_requests_handled = 0;
     while (1) {
         int len = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &addr_len);
         if (len > 0) {
@@ -1337,8 +1442,15 @@ void dns_hijack_task(void *pvParameter) {
             response[pos++] = 0x00; response[pos++] = 0x04; // RDLENGTH 4
             response[pos++] = 192;  response[pos++] = 168;  response[pos++] = 4; response[pos++] = 1; // 192.168.4.1
             sendto(sock, response, pos, 0, (struct sockaddr *)&client_addr, addr_len);
+            
+            // Feed watchdog every 10 DNS requests
+            dns_requests_handled++;
+            if (dns_requests_handled % 10 == 0) {
+                esp_task_wdt_reset();
+            }
         }
     }
     close(sock);
+    esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
 }

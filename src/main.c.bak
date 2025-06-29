@@ -1,0 +1,41 @@
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "esp_task_wdt.h"
+#include "esp_system.h"
+#include <stdio.h>
+
+void app_main(void) {
+    esp_log_level_set("*", ESP_LOG_INFO);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("WDT test: app_main started (printf)...\n");
+    ESP_LOGI("WDT_TEST", "WDT test: app_main started...");
+
+    // Initialize the Task Watchdog (timeout in seconds)
+    esp_task_wdt_config_t wdt_config = {
+        .timeout_ms = 5 * 1000,
+        .idle_core_mask = 0,
+        .trigger_panic = true
+    };
+    esp_err_t err;
+    err = esp_task_wdt_init(&wdt_config);
+    ESP_LOGI("WDT_TEST", "esp_task_wdt_init: %s", esp_err_to_name(err));
+    err = esp_task_wdt_add(NULL); // Add current task to WDT
+    ESP_LOGI("WDT_TEST", "esp_task_wdt_add: %s", esp_err_to_name(err));
+
+    for (int i = 0; i < 3; ++i) {
+        ESP_LOGI("WDT_TEST", "Loop %d: Resetting watchdog", i+1);
+        err = esp_task_wdt_reset();
+        ESP_LOGI("WDT_TEST", "esp_task_wdt_reset: %s", esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    ESP_LOGW("WDT_TEST", "Not resetting watchdog, should trigger reset in %d seconds...", 5);
+    vTaskDelay(pdMS_TO_TICKS(5 * 1000 + 1000));
+    ESP_LOGE("WDT_TEST", "Forcing reboot with esp_restart() after watchdog timeout!");
+    esp_restart();
+    while (1) {
+        // Should never reach here
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
