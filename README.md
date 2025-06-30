@@ -184,28 +184,23 @@ This firmware uses **two different watchdog systems**:
 
 The TWDT warnings you may see in logs are **normal** when no BMS is connected or MQTT broker is unavailable. These are informational and help with debugging but do not indicate a problem. The system automatically feeds the TWDT during normal operation to prevent false timeouts.
 
-### ESP-IDF Task Watchdog Configuration
+### Task Watchdog Timer (TWDT) Configuration and Interaction
 
-The ESP-IDF Task Watchdog Timer (TWDT) requires specific configuration settings in the ESP-IDF menuconfig. These settings are typically configured correctly by default, but may need verification if you encounter TWDT issues or are customizing the build.
+The ESP-IDF Task Watchdog Timer (TWDT) is configured via menuconfig. The most important setting is:
 
-**Required Configuration Settings:**
+- **Task Watchdog timeout period (seconds):** This sets the maximum time any watched task (including the main task) can go without feeding the TWDT. The default is 5 seconds, but for this firmware you should set it to **30 seconds** or higher.
 
-| Setting | Value | Description |
-|---------|-------|-------------|
-| `CONFIG_ESP_TASK_WDT_EN` | `y` | Includes TWDT support in the build |
-| `CONFIG_ESP_TASK_WDT_INIT` | `y` | Automatically initializes the TWDT during startup and subscribes the idle tasks |
-| `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0` | `y` | Keep the CPU0 idle tasks under surveillance right from boot |
-| `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1` | `y` | Keep the CPU1 idle tasks under surveillance right from boot |
-| `CONFIG_ESP_TASK_WDT_TIMEOUT_S` | `5` (typical) | Default timeout; can be changed later via `esp_task_wdt_init()`/`reconfigure()` (this firmware sets 30s) |
+**How to set:**
+1. Run `pio run -t menuconfig`
+2. Go to: `Component config` → `ESP System Settings` → `Task Watchdog Timer`
+3. Set **Task Watchdog timeout period (seconds)** to `30` (or higher if needed)
+4. Save and rebuild
 
-**How to Check/Modify Configuration:**
-1. Run `pio run -t menuconfig` in the project directory
-2. Navigate to: `Component config` → `ESP System Settings` → `Task Watchdog Timer`
-3. Verify the above settings are enabled
-4. Save and exit if changes were made
-5. Rebuild the project: `pio run`
-
-**Note:** The firmware automatically handles TWDT initialization and feeding during normal operation. These configuration settings ensure the underlying ESP-IDF TWDT system is available and properly configured.
+**IMPORTANT:**
+- The **software watchdog timeout** (which is `sample interval × 10`, in milliseconds) must always be **less than the Task Watchdog timeout period** (converted to milliseconds) set in menuconfig. 
+    - For example, if the Task Watchdog timeout is 30 seconds, then `sample interval × 10` must be **less than 30,000 ms**.
+    - If the software watchdog timeout is longer than the TWDT, the system may reset due to the TWDT before the software watchdog can trigger.
+- Both watchdogs are independent, but the Task Watchdog is a system-level safety net and will always take precedence if its timeout is reached first.
 
 ## Debug Logging
 

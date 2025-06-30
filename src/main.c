@@ -37,7 +37,7 @@ static bool watchdog_enabled = false;  // Whether watchdog is enabled
 static bool mqtt_publish_success = false;  // Flag for successful MQTT publish
 
 // Debug logging flag - set to false to reduce log output (except watchdog logs)
-static bool debug_logging = false;
+static bool debug_logging = true;
 
 #define WIFI_NVS_NAMESPACE "wifi_cfg"
 #define WIFI_NVS_KEY_SSID "ssid"
@@ -987,6 +987,8 @@ void app_main(void) {
         .trigger_panic = true // Trigger panic on timeout
     };
     esp_err_t twdt_err = esp_task_wdt_init(&twdt_config);
+    ESP_LOGI(TAG, "esp_task_wdt_init() returned: %d", twdt_err);
+    // No esp_task_wdt_get_timeout() in ESP-IDF; cannot log actual timeout at runtime
     if (twdt_err == ESP_ERR_INVALID_STATE) {
         ESP_LOGI(TAG, "Task Watchdog Timer already initialized");
     } else {
@@ -1053,81 +1055,69 @@ void app_main(void) {
 
     // Main loop to periodically send command and read response from BMS.
     while (1) {
-        // Feed the watchdog at the start of each cycle
+        ESP_LOGD(TAG, "[MAIN LOOP] Start iteration");
         esp_task_wdt_reset();
         
         // Check software watchdog timeout
+        ESP_LOGD(TAG, "[MAIN LOOP] Check software watchdog");
         if (watchdog_enabled) {
             TickType_t current_time = xTaskGetTickCount();
             TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
-            
             if (elapsed_ms >= watchdog_timeout_ms) {
-                ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", 
-                         elapsed_ms, watchdog_timeout_ms);
+                ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
                 ESP_LOGE(TAG, "Forcing system restart...");
-                vTaskDelay(pdMS_TO_TICKS(100)); // Brief delay to ensure log is output
-                esp_restart(); // Force system restart
+                vTaskDelay(pdMS_TO_TICKS(100));
+                esp_restart();
             }
         }
-        
-        // Reset MQTT publish success flag for this cycle
+        ESP_LOGD(TAG, "[MAIN LOOP] After software watchdog check");
+
         mqtt_publish_success = false;
-        
+        ESP_LOGD(TAG, "[MAIN LOOP] After reset mqtt_publish_success");
+
         if (debug_logging) {
             ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
         }
-        // Send the pre-defined "Read All Data" command to the BMS.
         send_bms_command(bms_read_all_cmd, sizeof(bms_read_all_cmd));
-        
-        // Attempt to read and discard the UART echo immediately after sending.
-        // The command is 21 bytes. At 115200 baud, transmission time is ~1.82ms.
-        // Echo should appear very shortly after transmission completes.
-        // A short timeout (e.g., 20ms) for uart_read_bytes should be sufficient for echo.
-        if (debug_logging) {
-            ESP_LOGI(TAG, "Attempting to read and discard echo (%d bytes) with 20ms timeout...", (int)sizeof(bms_read_all_cmd));
-        }
-        // Try to read exactly the number of bytes sent (the echo).
+        ESP_LOGD(TAG, "[MAIN LOOP] After send_bms_command");
+
         int echo_read_len = uart_read_bytes(UART_NUM, echo_buf, sizeof(bms_read_all_cmd), pdMS_TO_TICKS(20));
+        ESP_LOGD(TAG, "[MAIN LOOP] After uart_read_bytes for echo");
 
         if (echo_read_len == sizeof(bms_read_all_cmd)) {
             if (debug_logging) {
                 ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
             }
-            // ESP_LOG_BUFFER_HEX(TAG, echo_buf, echo_read_len); // Optional: log the echo if needed for debugging.
         } else if (echo_read_len > 0) {
             if (debug_logging) {
-                ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", 
-                         echo_read_len, (int)sizeof(bms_read_all_cmd));
+                ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", echo_read_len, (int)sizeof(bms_read_all_cmd));
             }
-        } else { // echo_read_len <= 0 (0 means timeout, -1 means error from uart_read_bytes)
+        } else {
             if (debug_logging) {
                 ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
             }
         }
-        // Even if this dedicated echo read fails or is partial, the `read_bms_data` function
-        // has its own logic to detect and skip leading echo bytes in the main data buffer.
+        ESP_LOGD(TAG, "[MAIN LOOP] After echo read handling");
 
-        // Call the function to read and process the actual BMS response.
-        read_bms_data(); 
-        
-        // Wait for the configured sample interval before the next cycle.
+        read_bms_data();
+        ESP_LOGD(TAG, "[MAIN LOOP] After read_bms_data");
+
         if (debug_logging) {
             ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
         }
-        
-        // For long delays, feed watchdog periodically during the wait
         if (sample_interval_ms > 5000) {
-            // Break long delays into chunks and feed watchdog
             uint32_t remaining_ms = sample_interval_ms;
             while (remaining_ms > 0) {
                 uint32_t chunk_ms = (remaining_ms > 5000) ? 5000 : remaining_ms;
                 vTaskDelay(pdMS_TO_TICKS(chunk_ms));
-                esp_task_wdt_reset(); // Feed watchdog every 5 seconds max
+                esp_task_wdt_reset();
                 remaining_ms -= chunk_ms;
             }
         } else {
-            vTaskDelay(pdMS_TO_TICKS(sample_interval_ms)); 
-        } 
+            vTaskDelay(pdMS_TO_TICKS(sample_interval_ms));
+        }
+        ESP_LOGD(TAG, "[MAIN LOOP] End of iteration, feeding TWDT");
+        esp_task_wdt_reset();
     }
 }
 
@@ -1309,7 +1299,7 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         }
         // Add extra fields
         for (int i = 0; i < extra_fields_count; ++i) {
-            const char *field_name = NULL;
+                       const char *field_name = NULL;
             for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
                 if (bms_idcodes[j].id == extra_fields[i].id) {
                     field_name = bms_idcodes[j].name;
