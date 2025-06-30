@@ -128,22 +128,26 @@ This firmware includes a robust software watchdog timer to ensure the ESP32 rema
 
 ### How It Works
 - **Timeout Calculation:** The watchdog timeout is set to **10× the sample interval** (as configured in the captive portal, in milliseconds).
-- **Automatic Enable/Disable:** 
-  - **Enabled** when sample interval > 10,000 ms (10 seconds)
-  - **Disabled** when sample interval ≤ 10,000 ms (for safety with frequent sampling)
-- **Reset Condition:** The watchdog timer is reset **only after successful MQTT publish confirmation** (`MQTT_EVENT_PUBLISHED`).
+- **Automatic Enable/Inactive:** 
+  - **Enabled** when timeout (10× sample interval) > 10,000 ms (i.e., sample interval > 1,000 ms)
+  - **Inactive** when timeout ≤ 10,000 ms (i.e., sample interval ≤ 1,000 ms, for safety with frequent sampling)
+- **Reset Condition:** The watchdog timer is reset **only after successful MQTT publish confirmation** (`MQTT_EVENT_PUBLISHED`) - this occurs at the same time the LED flashes.
 - **Timeout Action:** If no successful MQTT publish occurs within the timeout period, the ESP32 will automatically reboot and restart from the beginning (including the 10-second boot button wait).
 
 ### Examples
 | Sample Interval | Watchdog Status | Timeout Period | 
 |-----------------|----------------|----------------|
-| 5,000 ms (5s)   | Disabled       | N/A            |
+| 500 ms (0.5s)   | Inactive       | N/A (timeout: 5,000 ms) |
+| 1,000 ms (1s)   | Inactive       | N/A (timeout: 10,000 ms) |
+| 1,500 ms (1.5s) | Enabled        | 15,000 ms (15 seconds) |
+| 5,000 ms (5s)   | Enabled        | 50,000 ms (50 seconds) |
 | 15,000 ms (15s) | Enabled        | 150,000 ms (2.5 min) |
 | 30,000 ms (30s) | Enabled        | 300,000 ms (5 min) |
 | 60,000 ms (1m)  | Enabled        | 600,000 ms (10 min) |
 
 ### Visual Feedback
 - **LED Heartbeat:** The onboard LED (GPIO2) flashes **only** when an MQTT publish is successful, providing visual confirmation of system health.
+- **Watchdog Reset:** The software watchdog timer is reset at the exact same moment the LED flashes (both triggered by successful MQTT publish confirmation).
 - **No Flash:** If the LED stops flashing, it indicates MQTT communication issues, and the watchdog will eventually trigger a recovery reboot.
 
 ### Logging
@@ -159,6 +163,49 @@ This feature guarantees robust, unattended operation by automatically recovering
 - System software hangs or deadlocks
 
 **No user configuration required** — the watchdog operates automatically based on your sample interval setting.
+
+### Important: Two Watchdog Systems
+
+This firmware uses **two different watchdog systems**:
+
+#### 1. Software Watchdog (MQTT Communication Monitor)
+- **Purpose:** Monitors MQTT communication health
+- **Trigger:** Only when timeout (10× sample interval) > 10,000ms
+- **Timeout:** 10× sample interval
+- **Reset Condition:** Successful MQTT publish confirmation (same moment LED flashes)
+- **Action:** System restart with logs: "Software watchdog timeout! Forcing system restart..."
+
+#### 2. ESP-IDF Task Watchdog (TWDT) - System Monitor
+- **Purpose:** Monitors overall system task execution
+- **Always Active:** 30-second timeout (configured in firmware, overrides default 5s config setting)
+- **Normal Behavior:** May show warnings during BMS communication delays, but does not cause reboot
+- **Logs:** "Task watchdog got triggered" with backtrace (informational only)
+- **Auto-Recovery:** The main task feeds the TWDT regularly, including during BMS operations
+
+The TWDT warnings you may see in logs are **normal** when no BMS is connected or MQTT broker is unavailable. These are informational and help with debugging but do not indicate a problem. The system automatically feeds the TWDT during normal operation to prevent false timeouts.
+
+### ESP-IDF Task Watchdog Configuration
+
+The ESP-IDF Task Watchdog Timer (TWDT) requires specific configuration settings in the ESP-IDF menuconfig. These settings are typically configured correctly by default, but may need verification if you encounter TWDT issues or are customizing the build.
+
+**Required Configuration Settings:**
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `CONFIG_ESP_TASK_WDT_EN` | `y` | Includes TWDT support in the build |
+| `CONFIG_ESP_TASK_WDT_INIT` | `y` | Automatically initializes the TWDT during startup and subscribes the idle tasks |
+| `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0` | `y` | Keep the CPU0 idle tasks under surveillance right from boot |
+| `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1` | `y` | Keep the CPU1 idle tasks under surveillance right from boot |
+| `CONFIG_ESP_TASK_WDT_TIMEOUT_S` | `5` (typical) | Default timeout; can be changed later via `esp_task_wdt_init()`/`reconfigure()` (this firmware sets 30s) |
+
+**How to Check/Modify Configuration:**
+1. Run `pio run -t menuconfig` in the project directory
+2. Navigate to: `Component config` → `ESP System Settings` → `Task Watchdog Timer`
+3. Verify the above settings are enabled
+4. Save and exit if changes were made
+5. Rebuild the project: `pio run`
+
+**Note:** The firmware automatically handles TWDT initialization and feeding during normal operation. These configuration settings ensure the underlying ESP-IDF TWDT system is available and properly configured.
 
 ## Debug Logging
 

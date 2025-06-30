@@ -654,6 +654,9 @@ static void read_bms_data() {
     // JK BMS response time is typically <100ms for "Read All Data".
     // A 300ms delay provides a safety margin.
     vTaskDelay(pdMS_TO_TICKS(300)); 
+    
+    // Feed TWDT after the delay to prevent timeout during BMS communication
+    esp_task_wdt_reset(); 
 
     // Get the number of bytes available in the UART RX buffer.
     ESP_ERROR_CHECK(uart_get_buffered_data_len(UART_NUM, (size_t*)&length));
@@ -668,6 +671,9 @@ static void read_bms_data() {
         // Read the data from UART RX buffer into data_buf.
         // pdMS_TO_TICKS(200): Timeout for the read operation.
         int read_len = uart_read_bytes(UART_NUM, data_buf, length, pdMS_TO_TICKS(200)); 
+        
+        // Feed TWDT after UART read operation
+        esp_task_wdt_reset(); 
         
         if (read_len > 0) {
             ESP_LOGI(TAG, "Successfully read %d bytes from UART:", read_len);
@@ -1031,15 +1037,15 @@ void app_main(void) {
     wifi_init_sta(); // Initialize Wi-Fi
     
     // Initialize software watchdog
-    // Watchdog timeout is 10× sample interval (in ms), disabled if ≤10,000 ms
-    if (sample_interval_ms > 10000) {
-        watchdog_timeout_ms = sample_interval_ms * 10;
+    // Watchdog timeout is 10× sample interval (in ms), inactive if timeout ≤10,000 ms
+    watchdog_timeout_ms = sample_interval_ms * 10;
+    if (watchdog_timeout_ms > 10000) {
         watchdog_enabled = true;
         last_successful_publish = xTaskGetTickCount();
         ESP_LOGI(TAG, "Software watchdog enabled with timeout: %lu ms (10× sample interval)", watchdog_timeout_ms);
     } else {
         watchdog_enabled = false;
-        ESP_LOGI(TAG, "Software watchdog disabled (sample interval ≤10,000 ms)");
+        ESP_LOGI(TAG, "Software watchdog inactive (timeout ≤10,000 ms, sample interval: %lu ms)", sample_interval_ms);
     }
     
     // Buffer to attempt to read and discard UART echo. Size of the command sent.
