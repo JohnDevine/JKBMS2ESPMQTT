@@ -79,6 +79,15 @@
             text-align: center;
             font-weight: 500;
         }
+        .display-field {
+            padding: 0.7em;
+            margin-top: 0.3em;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            box-sizing: border-box;
+            background: #f0f0f0;
+        }
         @media (max-width: 600px) {
             .container {
                 padding: 1.2em 0.5em 1.5em 0.5em;
@@ -93,6 +102,29 @@
 <body>
     <div class="container">
         <h2>ESP32 Configuration</h2>
+        <div id="sysinfo" style="margin-bottom:1.5em;">
+            <label>Program Version:
+                <span id="sysinfo_version" class="display-field"></span>
+            </label><br>
+            <label>Build Date &amp; Time:
+                <span id="sysinfo_build" class="display-field"></span>
+            </label><br>
+            <label>Core/SDK Version:
+                <span id="sysinfo_sdk" class="display-field"></span>
+            </label><br>
+            <label>Restart Reason:
+                <span id="sysinfo_restart" class="display-field"></span>
+            </label><br>
+            <label>ESP Chip Id:
+                <span id="sysinfo_chipid" class="display-field"></span>
+            </label><br>
+            <label>Flash Chip Id:
+                <span id="sysinfo_flashid" class="display-field"></span>
+            </label><br>
+            <label>Flash Size:
+                <span id="sysinfo_flashsize" class="display-field"></span>
+            </label>
+        </div>
         <form id="paramsForm">
             <label>WiFi SSID:
                 <input type="text" name="ssid" id="ssid" required>
@@ -121,6 +153,28 @@
         document.getElementById('mqtt_url').value = cfg.mqtt_url || '';
         document.getElementById('sample_interval').value = cfg.sample_interval || 5000;
         document.getElementById('bms_topic').value = cfg.bms_topic || 'JKBMS';
+    });
+
+    // Fetch system info and populate display-only fields
+    fetch('/sysinfo.json').then(r => {
+        console.log('sysinfo response status:', r.status);
+        if (!r.ok) {
+            throw new Error('HTTP ' + r.status);
+        }
+        return r.json();
+    }).then(info => {
+        console.log('sysinfo data:', info);
+        document.getElementById('sysinfo_version').textContent = info.version || 'N/A';
+        document.getElementById('sysinfo_build').textContent = info.build || 'N/A';
+        document.getElementById('sysinfo_sdk').textContent = info.sdk || 'N/A';
+        document.getElementById('sysinfo_restart').textContent = info.restart_reason || 'N/A';
+        document.getElementById('sysinfo_chipid').textContent = info.chip_id || 'N/A';
+        document.getElementById('sysinfo_flashid').textContent = info.flash_id || 'N/A';
+        document.getElementById('sysinfo_flashsize').textContent = info.flash_size || 'N/A';
+    }).catch(err => {
+        console.error('Failed to fetch sysinfo:', err);
+        // Show error in first field so user knows something went wrong
+        document.getElementById('sysinfo_version').textContent = 'Error loading system info';
     });
 
     // Handle form submit via AJAX

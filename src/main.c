@@ -23,9 +23,15 @@
 #include "cJSON.h" // For JSON formatting
 #include "esp_spiffs.h"
 #include "esp_system.h"
+#include "esp_mac.h"
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
+#include "esp_chip_info.h"
+#include "esp_ota_ops.h"
+#include "esp_flash.h"
+#include "spi_flash_mmap.h"
+#include "esp_partition.h"
 
 // Watchdog timer includes
 #include "esp_task_wdt.h"
@@ -166,6 +172,13 @@ static int extra_fields_count = 0;
 void dns_hijack_task(void *pvParameter);
 
 void url_decode(char *dst, const char *src, size_t dstsize);
+
+// Forward declarations for HTTP handlers
+static esp_err_t params_json_get_handler(httpd_req_t *req);
+static esp_err_t params_update_post_handler(httpd_req_t *req);
+static esp_err_t parameters_html_handler(httpd_req_t *req);
+static esp_err_t captive_redirect_handler(httpd_req_t *req);
+static esp_err_t sysinfo_json_get_handler(httpd_req_t *req);
 
 // Initializes the UART communication peripheral.
 void init_uart();
@@ -899,6 +912,86 @@ esp_err_t captive_redirect_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// Handler for /sysinfo.json
+static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
+    char resp[512];
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    // Use esp_app_get_description if available, else fallback
+    #if ESP_IDF_VERSION_MAJOR >= 5
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    #else
+    const esp_app_desc_t *app_desc = esp_ota_get_app_description();
+    #endif
+    const char *idf_ver = esp_get_idf_version();
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char *reason_str = "Unknown";
+    switch (reason) {
+        case ESP_RST_POWERON: reason_str = "Power-on"; break;
+        case ESP_RST_EXT: reason_str = "External"; break;
+        case ESP_RST_SW: reason_str = "Software"; break;
+        case ESP_RST_PANIC: reason_str = "Panic"; break;
+        case ESP_RST_INT_WDT: reason_str = "Interrupt WDT"; break;
+        case ESP_RST_TASK_WDT: reason_str = "Task WDT"; break;
+        case ESP_RST_WDT: reason_str = "Other WDT"; break;
+        case ESP_RST_DEEPSLEEP: reason_str = "Deep Sleep"; break;
+        case ESP_RST_BROWNOUT: reason_str = "Brownout"; break;
+        case ESP_RST_SDIO: reason_str = "SDIO"; break;
+        default: break;
+    }
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    char chip_id[18];
+    snprintf(chip_id, sizeof(chip_id), "%02X%02X%02X%02X%02X%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    // Get flash chip information
+    uint32_t flash_id = 0x000000; // Placeholder
+    uint32_t flash_size = 0;
+    
+    // Get actual flash size - ESP32 DevKit V1 typically has 4MB
+    // Use the more reliable method of checking all partitions to estimate total flash
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    uint32_t max_offset = 0;
+    while (it != NULL) {
+        const esp_partition_t *partition = esp_partition_get(it);
+        uint32_t partition_end = partition->address + partition->size;
+        if (partition_end > max_offset) {
+            max_offset = partition_end;
+        }
+        it = esp_partition_next(it);
+    }
+    if (it) esp_partition_iterator_release(it);
+    
+    // Round up to nearest MB and ensure it's at least 4MB for ESP32 DevKit V1
+    if (max_offset > 0) {
+        flash_size = ((max_offset + 1024*1024 - 1) / (1024*1024)) * 1024*1024; // Round up to nearest MB
+        if (flash_size < 4*1024*1024) flash_size = 4*1024*1024; // Minimum 4MB for ESP32 DevKit V1
+    } else {
+        flash_size = 4 * 1024 * 1024; // Default 4MB for ESP32 DevKit V1
+    }
+    snprintf(resp, sizeof(resp),
+        "{"
+        "\"version\":\"%s\","  // Program Version
+        "\"build\":\"%s %s\"," // Build Date & Time
+        "\"sdk\":\"%s\","      // Core/SDK Version
+        "\"restart_reason\":\"%s\"," // Restart Reason
+        "\"chip_id\":\"%s\","  // ESP Chip Id
+        "\"flash_id\":\"%06lX\"," // Flash Chip Id
+        "\"flash_size\":\"%lu KB\""
+        "}",
+        app_desc->version,
+        app_desc->date, app_desc->time,
+        idf_ver,
+        reason_str,
+        chip_id,
+        (unsigned long)(flash_id & 0xFFFFFF),
+        (unsigned long)(flash_size / 1024)
+    );
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
 static void start_ap_and_captive_portal() {
     // Start AP mode
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -937,10 +1030,12 @@ static void start_ap_and_captive_portal() {
     httpd_uri_t params_json = { .uri = "/params.json", .method = HTTP_GET, .handler = params_json_get_handler, .user_ctx = NULL };
     httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
     httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
+    httpd_uri_t sysinfo_json = { .uri = "/sysinfo.json", .method = HTTP_GET, .handler = sysinfo_json_get_handler, .user_ctx = NULL };
     httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
     httpd_register_uri_handler(server, &params_json);
     httpd_register_uri_handler(server, &params_update);
     httpd_register_uri_handler(server, &parameters_html);
+    httpd_register_uri_handler(server, &sysinfo_json);
     httpd_register_uri_handler(server, &captive);
 }
 
@@ -967,158 +1062,6 @@ void blink_heartbeat() {
     gpio_set_level(ONBOARD_LED_GPIO, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
     gpio_set_level(ONBOARD_LED_GPIO, 0);
-}
-
-// Main application entry point.
-void app_main(void) {
-    // Initialize NVS first for all code paths
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    // Configure Task Watchdog Timer
-    ESP_LOGI(TAG, "Configuring Task Watchdog Timer...");
-    esp_task_wdt_config_t twdt_config = {
-        .timeout_ms = 30000, // 30 second timeout
-        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all cores
-        .trigger_panic = true // Trigger panic on timeout
-    };
-    esp_err_t twdt_err = esp_task_wdt_init(&twdt_config);
-    ESP_LOGI(TAG, "esp_task_wdt_init() returned: %d", twdt_err);
-    // No esp_task_wdt_get_timeout() in ESP-IDF; cannot log actual timeout at runtime
-    if (twdt_err == ESP_ERR_INVALID_STATE) {
-        ESP_LOGI(TAG, "Task Watchdog Timer already initialized");
-    } else {
-        ESP_ERROR_CHECK(twdt_err);
-        ESP_LOGI(TAG, "Task Watchdog Timer initialized successfully");
-    }
-    ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); // Add current task to watchdog
-    ESP_LOGI(TAG, "Task Watchdog Timer configured successfully");
-
-    ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
-    gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
-    bool boot_btn_pressed = false;
-    for (int i = 0; i < 1000; ++i) { // 10 seconds, check every 10ms
-        if (gpio_get_level(BOOT_BTN_GPIO) == 0) {
-            boot_btn_pressed = true;
-            ESP_LOGI(TAG, "Boot button press detected during wait!");
-            break;
-        }
-        // Feed watchdog every 100 iterations (1 second)
-        if (i % 100 == 0) {
-            esp_task_wdt_reset();
-        }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-    ESP_LOGI(TAG, "Boot button wait finished, continuing startup...");
-    if (boot_btn_pressed) {
-        ESP_LOGI(TAG, "Entering AP config mode due to boot button press.");
-        xTaskCreate(ap_config_task, "ap_config_task", 8192, NULL, 5, NULL);
-        while (1) {
-            esp_task_wdt_reset(); // Feed watchdog in config mode
-            vTaskDelay(1000/portTICK_PERIOD_MS); // Block forever
-        }
-    }
-
-    // Initialize UART communication.
-    init_uart();
-
-    load_wifi_config_from_nvs();
-    load_mqtt_config_from_nvs();
-    load_sample_interval_from_nvs();
-    load_bms_topic_from_nvs();
-    ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
-    ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
-    ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
-    ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
-    ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
-    wifi_init_sta(); // Initialize Wi-Fi
-    
-    // Initialize software watchdog
-    // Watchdog timeout is 10× sample interval (in ms), inactive if timeout ≤10,000 ms
-    watchdog_timeout_ms = sample_interval_ms * 10;
-    if (watchdog_timeout_ms > 10000) {
-        watchdog_enabled = true;
-        last_successful_publish = xTaskGetTickCount();
-        ESP_LOGI(TAG, "Software watchdog enabled with timeout: %lu ms (10× sample interval)", watchdog_timeout_ms);
-    } else {
-        watchdog_enabled = false;
-        ESP_LOGI(TAG, "Software watchdog inactive (timeout ≤10,000 ms, sample interval: %lu ms)", sample_interval_ms);
-    }
-    
-    // Buffer to attempt to read and discard UART echo. Size of the command sent.
-    uint8_t echo_buf[sizeof(bms_read_all_cmd)]; 
-
-    // Main loop to periodically send command and read response from BMS.
-    while (1) {
-        ESP_LOGD(TAG, "[MAIN LOOP] Start iteration");
-        esp_task_wdt_reset();
-        
-        // Check software watchdog timeout
-        ESP_LOGD(TAG, "[MAIN LOOP] Check software watchdog");
-        if (watchdog_enabled) {
-            TickType_t current_time = xTaskGetTickCount();
-            TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
-            if (elapsed_ms >= watchdog_timeout_ms) {
-                ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
-                ESP_LOGE(TAG, "Forcing system restart...");
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_restart();
-            }
-        }
-        ESP_LOGD(TAG, "[MAIN LOOP] After software watchdog check");
-
-        mqtt_publish_success = false;
-        ESP_LOGD(TAG, "[MAIN LOOP] After reset mqtt_publish_success");
-
-        if (debug_logging) {
-            ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
-        }
-        send_bms_command(bms_read_all_cmd, sizeof(bms_read_all_cmd));
-        ESP_LOGD(TAG, "[MAIN LOOP] After send_bms_command");
-
-        int echo_read_len = uart_read_bytes(UART_NUM, echo_buf, sizeof(bms_read_all_cmd), pdMS_TO_TICKS(20));
-        ESP_LOGD(TAG, "[MAIN LOOP] After uart_read_bytes for echo");
-
-        if (echo_read_len == sizeof(bms_read_all_cmd)) {
-            if (debug_logging) {
-                ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
-            }
-        } else if (echo_read_len > 0) {
-            if (debug_logging) {
-                ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", echo_read_len, (int)sizeof(bms_read_all_cmd));
-            }
-        } else {
-            if (debug_logging) {
-                ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
-            }
-        }
-        ESP_LOGD(TAG, "[MAIN LOOP] After echo read handling");
-
-        read_bms_data();
-        ESP_LOGD(TAG, "[MAIN LOOP] After read_bms_data");
-
-        if (debug_logging) {
-            ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
-        }
-        if (sample_interval_ms > 5000) {
-            uint32_t remaining_ms = sample_interval_ms;
-            while (remaining_ms > 0) {
-                uint32_t chunk_ms = (remaining_ms > 5000) ? 5000 : remaining_ms;
-                vTaskDelay(pdMS_TO_TICKS(chunk_ms));
-                esp_task_wdt_reset();
-                remaining_ms -= chunk_ms;
-            }
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(sample_interval_ms));
-        }
-        ESP_LOGD(TAG, "[MAIN LOOP] End of iteration, feeding TWDT");
-        esp_task_wdt_reset();
-    }
 }
 
 // Wi-Fi Event Handler
@@ -1449,4 +1392,156 @@ void dns_hijack_task(void *pvParameter) {
     close(sock);
     esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
+}
+
+// Main application entry point.
+void app_main(void) {
+    // Initialize NVS first for all code paths
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    // Configure Task Watchdog Timer
+    ESP_LOGI(TAG, "Configuring Task Watchdog Timer...");
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 30000, // 30 second timeout
+        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all cores
+        .trigger_panic = true // Trigger panic on timeout
+    };
+    esp_err_t twdt_err = esp_task_wdt_init(&twdt_config);
+    ESP_LOGI(TAG, "esp_task_wdt_init() returned: %d", twdt_err);
+    // No esp_task_wdt_get_timeout() in ESP-IDF; cannot log actual timeout at runtime
+    if (twdt_err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGI(TAG, "Task Watchdog Timer already initialized");
+    } else {
+        ESP_ERROR_CHECK(twdt_err);
+        ESP_LOGI(TAG, "Task Watchdog Timer initialized successfully");
+    }
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); // Add current task to watchdog
+    ESP_LOGI(TAG, "Task Watchdog Timer configured successfully");
+
+    ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
+    gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
+    bool boot_btn_pressed = false;
+    for (int i = 0; i < 1000; ++i) { // 10 seconds, check every 10ms
+        if (gpio_get_level(BOOT_BTN_GPIO) == 0) {
+            boot_btn_pressed = true;
+            ESP_LOGI(TAG, "Boot button press detected during wait!");
+            break;
+        }
+        // Feed watchdog every 100 iterations (1 second)
+        if (i % 100 == 0) {
+            esp_task_wdt_reset();
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    ESP_LOGI(TAG, "Boot button wait finished, continuing startup...");
+    if (boot_btn_pressed) {
+        ESP_LOGI(TAG, "Entering AP config mode due to boot button press.");
+        xTaskCreate(ap_config_task, "ap_config_task", 8192, NULL, 5, NULL);
+        while (1) {
+            esp_task_wdt_reset(); // Feed watchdog in config mode
+            vTaskDelay(1000/portTICK_PERIOD_MS); // Block forever
+        }
+    }
+
+    // Initialize UART communication.
+    init_uart();
+
+    load_wifi_config_from_nvs();
+    load_mqtt_config_from_nvs();
+    load_sample_interval_from_nvs();
+    load_bms_topic_from_nvs();
+    ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
+    ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
+    ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
+    ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
+    ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta(); // Initialize Wi-Fi
+    
+    // Initialize software watchdog
+    // Watchdog timeout is 10× sample interval (in ms), inactive if timeout ≤10,000 ms
+    watchdog_timeout_ms = sample_interval_ms * 10;
+    if (watchdog_timeout_ms > 10000) {
+        watchdog_enabled = true;
+        last_successful_publish = xTaskGetTickCount();
+        ESP_LOGI(TAG, "Software watchdog enabled with timeout: %lu ms (10× sample interval)", watchdog_timeout_ms);
+    } else {
+        watchdog_enabled = false;
+        ESP_LOGI(TAG, "Software watchdog inactive (timeout ≤10,000 ms, sample interval: %lu ms)", sample_interval_ms);
+    }
+
+    // Buffer to attempt to read and discard UART echo. Size of the command sent.
+    uint8_t echo_buf[sizeof(bms_read_all_cmd)]; 
+
+    // Main loop to periodically send command and read response from BMS.
+    while (1) {
+        ESP_LOGD(TAG, "[MAIN LOOP] Start iteration");
+        esp_task_wdt_reset();
+        
+        // Check software watchdog timeout
+        ESP_LOGD(TAG, "[MAIN LOOP] Check software watchdog");
+        if (watchdog_enabled) {
+            TickType_t current_time = xTaskGetTickCount();
+            TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
+            if (elapsed_ms >= watchdog_timeout_ms) {
+                ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
+                ESP_LOGE(TAG, "Forcing system restart...");
+                vTaskDelay(pdMS_TO_TICKS(100));
+                esp_restart();
+            }
+        }
+        ESP_LOGD(TAG, "[MAIN LOOP] After software watchdog check");
+
+        mqtt_publish_success = false;
+        ESP_LOGD(TAG, "[MAIN LOOP] After reset mqtt_publish_success");
+
+        if (debug_logging) {
+            ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
+        }
+        send_bms_command(bms_read_all_cmd, sizeof(bms_read_all_cmd));
+        ESP_LOGD(TAG, "[MAIN LOOP] After send_bms_command");
+
+        int echo_read_len = uart_read_bytes(UART_NUM, echo_buf, sizeof(bms_read_all_cmd), pdMS_TO_TICKS(20));
+        ESP_LOGD(TAG, "[MAIN LOOP] After uart_read_bytes for echo");
+
+        if (echo_read_len == sizeof(bms_read_all_cmd)) {
+            if (debug_logging) {
+                ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
+            }
+        } else if (echo_read_len > 0) {
+            if (debug_logging) {
+                ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", echo_read_len, (int)sizeof(bms_read_all_cmd));
+            }
+        } else {
+            if (debug_logging) {
+                ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
+            }
+        }
+        ESP_LOGD(TAG, "[MAIN LOOP] After echo read handling");
+
+        read_bms_data();
+        ESP_LOGD(TAG, "[MAIN LOOP] After read_bms_data");
+
+        if (debug_logging) {
+            ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
+        }
+        if (sample_interval_ms > 5000) {
+            uint32_t remaining_ms = sample_interval_ms;
+            while (remaining_ms > 0) {
+                uint32_t chunk_ms = (remaining_ms > 5000) ? 5000 : remaining_ms;
+                vTaskDelay(pdMS_TO_TICKS(chunk_ms));
+                esp_task_wdt_reset();
+                remaining_ms -= chunk_ms;
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(sample_interval_ms));
+        }
+        ESP_LOGD(TAG, "[MAIN LOOP] End of iteration, feeding TWDT");
+        esp_task_wdt_reset();
+    }
 }
