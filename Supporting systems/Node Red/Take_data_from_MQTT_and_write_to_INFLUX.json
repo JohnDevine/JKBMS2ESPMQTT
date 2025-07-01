@@ -1,0 +1,35 @@
+[
+    {
+        "id": "f5758cf2ab98606b",
+        "type": "influxdb out",
+        "z": "79076cf9a50d2158",
+        "influxdb": "2ed0bc98bcc324f8",
+        "name": "Write to Influx measurement BMS",
+        "measurement": "BMS",
+        "precision": "",
+        "retentionPolicy": "one_week",
+        "database": "influxdb",
+        "precisionV18FluxV20": "ms",
+        "retentionPolicyV18Flux": "",
+        "org": "organisation",
+        "bucket": "bucket",
+        "x": 340,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "2ed0bc98bcc324f8",
+        "type": "influxdb",
+        "hostname": "influxdb",
+        "port": 8086,
+        "protocol": "http",
+        "database": "BMS",
+        "name": "BMS database",
+        "usetls": false,
+        "tls": "",
+        "influxdbVersion": "1.x",
+        "url": "http://localhost:8086",
+        "timeout": 10,
+        "rejectUnauthorized": true
+    }
+]

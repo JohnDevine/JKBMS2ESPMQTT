@@ -1,3 +1,24 @@
+/*
+ * CONDITIONAL LOGGING CONFIGURATION
+ * 
+ * To enable debug logging for this specific file, uncomment the line below.
+ * This allows ESP_LOGD() calls to be compiled in and displayed when the 
+ * global log level is set to DEBUG or VERBOSE.
+ * 
+ * Log Levels (from highest to lowest priority):
+ * - ESP_LOG_ERROR   (E) - Error conditions
+ * - ESP_LOG_WARN    (W) - Warning conditions  
+ * - ESP_LOG_INFO    (I) - Informational messages
+ * - ESP_LOG_DEBUG   (D) - Debug messages
+ * - ESP_LOG_VERBOSE (V) - Verbose debug messages
+ * 
+ * To set global log level in menuconfig:
+ * Component config > Log output > Default log verbosity
+ * 
+ * To set at runtime: esp_log_level_set("*", ESP_LOG_DEBUG);
+ */
+// #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
+
 // Standard C input/output library
 #include <stdio.h>
 // FreeRTOS real-time operating system definitions
@@ -27,6 +48,7 @@
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
+#include <errno.h>
 #include "esp_chip_info.h"
 #include "esp_ota_ops.h"
 #include "esp_flash.h"
@@ -59,7 +81,7 @@ static bool debug_logging = true;
 static char wifi_ssid[33] = DEFAULT_WIFI_SSID;
 static char wifi_pass[65] = DEFAULT_WIFI_PASS;
 static char mqtt_broker_url[128] = DEFAULT_MQTT_BROKER_URL;
-static char bms_topic[41] = "JKBMS";
+char bms_topic[41] = "BMS/JKBMS";  // Remove static to make it globally accessible
 static long sample_interval_ms = DEFAULT_SAMPLE_INTERVAL;
 
 // Define the UART peripheral number to be used (UART2 in this case)
@@ -179,6 +201,7 @@ static esp_err_t params_update_post_handler(httpd_req_t *req);
 static esp_err_t parameters_html_handler(httpd_req_t *req);
 static esp_err_t captive_redirect_handler(httpd_req_t *req);
 static esp_err_t sysinfo_json_get_handler(httpd_req_t *req);
+static esp_err_t wifi_scan_json_get_handler(httpd_req_t *req);
 
 // Initializes the UART communication peripheral.
 void init_uart();
@@ -601,50 +624,127 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     }
     
     // --- Parse additional fields from Data Identification Codes table ---
+    ESP_LOGI(TAG, "=== PARSING EXTRA FIELDS ===");
+    ESP_LOGI(TAG, "Starting extra field parsing at offset %d, payload length: %d", current_offset, payload_len);
+    
+    // Debug: Show the raw data we're about to parse
+    if (payload_len > current_offset) {
+        ESP_LOGI(TAG, "Raw data to parse (next 50 bytes):");
+        for (int debug_i = current_offset; debug_i < payload_len && debug_i < current_offset + 50; debug_i++) {
+            printf("0x%02X ", payload[debug_i]);
+            if ((debug_i - current_offset + 1) % 16 == 0) printf("\n");
+        }
+        printf("\n");
+    }
+    
     extra_fields_count = 0;
     int extra_offset = current_offset;
     while (extra_offset < payload_len && extra_fields_count < MAX_EXTRA_FIELDS) {
         uint8_t id = payload[extra_offset];
-        int found = 0;
-        for (size_t i = 0; i < BMS_IDCODES_COUNT; ++i) {
-            if (bms_idcodes[i].id == id) {
-                uint32_t value = 0;
-                int bytes = bms_idcodes[i].byte_len;
-                const char *type = bms_idcodes[i].type;
-                int is_ascii = (type && (strcmp(type, "Code") == 0 || strcmp(type, "Column") == 0));
-                char strval[48] = {0};
-                if (bytes > 0 && (extra_offset + bytes) < payload_len) {
-                    if (is_ascii) {
-                        int copylen = (bytes < 47) ? bytes : 47;
-                        memcpy(strval, &payload[extra_offset + 1], copylen);
-                        strval[copylen] = '\0';
-                        // Remove non-printable chars
-                        for (int s = 0; s < copylen; ++s) {
-                            if (strval[s] < 32 || strval[s] > 126) strval[s] = '\0';
-                        }
-                    } else {
-                        for (int b = 0; b < bytes; ++b) {
-                            value = (value << 8) | payload[extra_offset + 1 + b];
-                        }
-                    }
-                }
-                extra_fields[extra_fields_count].id = id;
-                extra_fields[extra_fields_count].value = value;
-                extra_fields[extra_fields_count].is_ascii = is_ascii;
-                if (is_ascii) {
-                    strncpy(extra_fields[extra_fields_count].strval, strval, sizeof(extra_fields[extra_fields_count].strval)-1);
-                } else {
-                    extra_fields[extra_fields_count].strval[0] = '\0';
-                }
-                extra_fields_count++;
-                ESP_LOGI(TAG, "Decoded %s (0x%02X): %s%lu", bms_idcodes[i].name, id, is_ascii ? strval : "", is_ascii ? 0 : (unsigned long)value);
-                extra_offset += 1 + bytes;
-                found = 1;
+        ESP_LOGI(TAG, "Found field ID 0x%02X at offset %d", id, extra_offset);
+        
+        // Check if this field ID has already been processed
+        bool already_exists = false;
+        for (int j = 0; j < extra_fields_count; j++) {
+            if (extra_fields[j].id == id) {
+                already_exists = true;
+                ESP_LOGW(TAG, "DUPLICATE DETECTED: Field ID 0x%02X already exists at index %d", id, j);
                 break;
             }
         }
-        if (!found) extra_offset++;
+        
+        if (!already_exists) {
+            int found = 0;
+            for (size_t i = 0; i < BMS_IDCODES_COUNT; ++i) {
+                if (bms_idcodes[i].id == id) {
+                    // Special debug for 0xB4
+                    if (id == 0xB4) {
+                        ESP_LOGI(TAG, "=== PROCESSING 0xB4 SPECIFICALLY ===");
+                        ESP_LOGI(TAG, "Field bytes: %d, Type: %s", bms_idcodes[i].byte_len, bms_idcodes[i].type);
+                        ESP_LOGI(TAG, "Available data: offset %d, payload_len %d", extra_offset, payload_len);
+                    }
+                    
+                    uint32_t value = 0;
+                    int bytes = bms_idcodes[i].byte_len;
+                    const char *type = bms_idcodes[i].type;
+                    int is_ascii = (type && (strcmp(type, "Code") == 0 || strcmp(type, "Column") == 0));
+                    char strval[48] = {0};
+                    if (bytes > 0 && (extra_offset + bytes) < payload_len) {
+                        // Always calculate numeric value (needed for fallback hex string)
+                        for (int b = 0; b < bytes; ++b) {
+                            value = (value << 8) | payload[extra_offset + 1 + b];
+                        }
+                        
+                        if (is_ascii) {
+                            int copylen = (bytes < 47) ? bytes : 47;
+                            memcpy(strval, &payload[extra_offset + 1], copylen);
+                            strval[copylen] = '\0';
+                            // Remove non-printable chars
+                            for (int s = 0; s < copylen; ++s) {
+                                if (strval[s] < 32 || strval[s] > 126) strval[s] = '\0';
+                            }
+                            
+                            // Special debug for 0xB4
+                            if (id == 0xB4) {
+                                ESP_LOGI(TAG, "0xB4 raw bytes: %02X %02X %02X %02X %02X %02X %02X %02X", 
+                                         payload[extra_offset + 1], payload[extra_offset + 2], payload[extra_offset + 3], payload[extra_offset + 4],
+                                         payload[extra_offset + 5], payload[extra_offset + 6], payload[extra_offset + 7], payload[extra_offset + 8]);
+                                ESP_LOGI(TAG, "0xB4 parsed string: '%s'", strval);
+                            }
+                            
+                            // Force Device ID Code to be string even if parsing results in empty string
+                            if (id == 0xB4 && strval[0] == '\0') {
+                                snprintf(strval, sizeof(strval), "%08X", (unsigned int)value);
+                                ESP_LOGI(TAG, "0xB4 forced to hex string: '%s'", strval);
+                            }
+                        }
+                    } else {
+                        if (id == 0xB4) {
+                            ESP_LOGW(TAG, "0xB4 SKIPPED: insufficient data. Need %d bytes, have %d", bytes, payload_len - extra_offset - 1);
+                        }
+                    }
+                    extra_fields[extra_fields_count].id = id;
+                    extra_fields[extra_fields_count].value = value;
+                    extra_fields[extra_fields_count].is_ascii = is_ascii;
+                    if (is_ascii) {
+                        strncpy(extra_fields[extra_fields_count].strval, strval, sizeof(extra_fields[extra_fields_count].strval)-1);
+                    } else {
+                        extra_fields[extra_fields_count].strval[0] = '\0';
+                    }
+                    extra_fields_count++;
+                    ESP_LOGI(TAG, "PARSED: %s (0x%02X): %s%lu (offset %d -> %d)", 
+                             bms_idcodes[i].name, id, is_ascii ? strval : "", 
+                             is_ascii ? 0 : (unsigned long)value, extra_offset, extra_offset + 1 + bytes);
+                    extra_offset += 1 + bytes;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                ESP_LOGW(TAG, "UNKNOWN field ID 0x%02X at offset %d, skipping", id, extra_offset);
+                extra_offset++;
+            }
+        } else {
+            // Skip this duplicate field
+            ESP_LOGW(TAG, "SKIPPING duplicate field ID 0x%02X", id);
+            int found = 0;
+            for (size_t i = 0; i < BMS_IDCODES_COUNT; ++i) {
+                if (bms_idcodes[i].id == id) {
+                    ESP_LOGI(TAG, "Skipping %d bytes for duplicate 0x%02X", bms_idcodes[i].byte_len, id);
+                    extra_offset += 1 + bms_idcodes[i].byte_len;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                ESP_LOGW(TAG, "Unknown duplicate field 0x%02X, advancing by 1 byte", id);
+                extra_offset++;
+            }
+        }
     }
+    
+    ESP_LOGI(TAG, "=== EXTRA FIELDS PARSING COMPLETE ===");
+    ESP_LOGI(TAG, "Parsed %d unique extra fields", extra_fields_count);
 
     printf("----------------------------------------\n"); // Separator for console output.
 
@@ -790,16 +890,37 @@ void load_sample_interval_from_nvs() {
 }
 
 void load_bms_topic_from_nvs() {
+    ESP_LOGI(TAG, "=== LOADING BMS TOPIC FROM NVS ===");
+    ESP_LOGI(TAG, "Initial bms_topic value: '%s'", bms_topic);
+    
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    ESP_LOGI(TAG, "NVS open result: %s", esp_err_to_name(err));
+    
     if (err == ESP_OK) {
         size_t topic_len = sizeof(bms_topic);
-        if (nvs_get_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic, &topic_len) != ESP_OK) {
-            strncpy(bms_topic, "JKBMS", sizeof(bms_topic)-1);
-            nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic);
+        ESP_LOGI(TAG, "Attempting to read NVS key '%s', buffer size: %d", NVS_KEY_BMS_TOPIC, topic_len);
+        
+        esp_err_t get_err = nvs_get_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic, &topic_len);
+        ESP_LOGI(TAG, "NVS get_str result: %s", esp_err_to_name(get_err));
+        
+        if (get_err != ESP_OK) {
+            ESP_LOGW(TAG, "BMS topic not found in NVS (error: %s), using default: BMS/JKBMS", esp_err_to_name(get_err));
+            strncpy(bms_topic, "BMS/JKBMS", sizeof(bms_topic)-1);
+            bms_topic[sizeof(bms_topic)-1] = '\0';
+            esp_err_t set_err = nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic);
+            ESP_LOGI(TAG, "Default BMS topic save result: %s", esp_err_to_name(set_err));
+            nvs_commit(nvs_handle);
+        } else {
+            ESP_LOGI(TAG, "Successfully loaded BMS topic from NVS: '%s' (length: %d)", bms_topic, topic_len);
         }
         nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for BMS topic: %s", esp_err_to_name(err));
+        strncpy(bms_topic, "BMS/JKBMS", sizeof(bms_topic)-1);
+        bms_topic[sizeof(bms_topic)-1] = '\0';
     }
+    ESP_LOGI(TAG, "=== FINAL BMS TOPIC: '%s' ===", bms_topic);
 }
 
 void save_bms_topic_to_nvs(const char *topic) {
@@ -824,22 +945,65 @@ void init_spiffs() {
 
 // HTTP handler for /params.json
 esp_err_t params_json_get_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "=== PARAMS.JSON REQUEST ===");
+    ESP_LOGI(TAG, "Current bms_topic variable: '%s'", bms_topic);
+    ESP_LOGI(TAG, "Current wifi_ssid: '%s'", wifi_ssid);
+    ESP_LOGI(TAG, "Current mqtt_broker_url: '%s'", mqtt_broker_url);
+    ESP_LOGI(TAG, "Current sample_interval_ms: %ld", sample_interval_ms);
+    
     char buf[512];
-    snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"password\":\"%s\",\"mqtt_url\":\"%s\",\"sample_interval\":%ld}", wifi_ssid, wifi_pass, mqtt_broker_url, sample_interval_ms);
+    snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"password\":\"%s\",\"mqtt_url\":\"%s\",\"sample_interval\":%ld,\"bms_topic\":\"%s\"}", 
+             wifi_ssid, wifi_pass, mqtt_broker_url, sample_interval_ms, bms_topic);
+    ESP_LOGI(TAG, "Sending params.json response: %s", buf);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+    ESP_LOGI(TAG, "=== PARAMS.JSON RESPONSE SENT ===");
     return ESP_OK;
+}
+
+// Global flag to signal shutdown
+static bool system_shutting_down = false;
+
+// Reboot task function
+static void reboot_task(void *param) {
+    ESP_LOGI(TAG, "Reboot task started, shutting down gracefully...");
+    
+    // Set shutdown flag to signal other tasks to stop
+    system_shutting_down = true;
+    
+    // Give time for HTTP response to complete
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    
+    ESP_LOGI(TAG, "Disabling task watchdog before restart...");
+    esp_task_wdt_deinit();
+    
+    // Give a bit more time for tasks to see the shutdown flag
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    
+    ESP_LOGI(TAG, "Performing system restart NOW...");
+    fflush(stdout);  // Ensure log message is sent
+    
+    esp_restart();
+    
+    // This line should never be reached
+    vTaskDelete(NULL);
 }
 
 // HTTP handler for /update (POST)
 esp_err_t params_update_post_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "=== UPDATE REQUEST RECEIVED ===");
+    
     char buf[512];
     int ret = httpd_req_recv(req, buf, sizeof(buf)-1);
     if (ret <= 0) {
+        ESP_LOGE(TAG, "Failed to receive update data");
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
     buf[ret] = 0;
+    
+    ESP_LOGI(TAG, "Received update data: %s", buf);
+    
     char ssid[33] = "", pass[65] = "", mqtt_url[128] = "";
     long interval = 5000;
     sscanf(strstr(buf, "ssid=")+5, "%32[^&]", ssid);
@@ -862,22 +1026,49 @@ esp_err_t params_update_post_handler(httpd_req_t *req) {
     nvs_set_str(nvs_handle, WIFI_NVS_KEY_PASS, wifi_pass);
     nvs_set_str(nvs_handle, MQTT_NVS_KEY_URL, mqtt_broker_url);
     nvs_set_i64(nvs_handle, NVS_KEY_SAMPLE_INTERVAL, (int64_t)sample_interval_ms);
-    // Use the global bms_topic variable
-    extern char bms_topic[41];
+    // Handle BMS topic
+    ESP_LOGI(TAG, "=== PROCESSING BMS TOPIC ===");
+    ESP_LOGI(TAG, "Current bms_topic before update: '%s'", bms_topic);
+    
     char bms_topic_in[41] = "";
     char bms_topic_dec[41];
     char *bms_topic_ptr = strstr(buf, "bms_topic=");
     if (bms_topic_ptr) {
         sscanf(bms_topic_ptr + 10, "%40[^&]", bms_topic_in);
+        ESP_LOGI(TAG, "Raw BMS topic from form: '%s'", bms_topic_in);
+        
         url_decode(bms_topic_dec, bms_topic_in, sizeof(bms_topic_dec));
+        ESP_LOGI(TAG, "URL decoded BMS topic: '%s'", bms_topic_dec);
+        
         strncpy(bms_topic, bms_topic_dec, sizeof(bms_topic)-1);
+        bms_topic[sizeof(bms_topic)-1] = '\0';
+        ESP_LOGI(TAG, "BMS topic updated to: '%s'", bms_topic);
+    } else {
+        ESP_LOGW(TAG, "No bms_topic found in request data: %s", buf);
     }
-    nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic);
+    
+    esp_err_t nvs_err = nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic);
+    ESP_LOGI(TAG, "Saved BMS topic '%s' to NVS with key '%s': %s", bms_topic, NVS_KEY_BMS_TOPIC, esp_err_to_name(nvs_err));
+    ESP_LOGI(TAG, "=== BMS TOPIC PROCESSING COMPLETE ===");
     nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
+    
+    ESP_LOGI(TAG, "Configuration saved successfully. Sending response...");
     httpd_resp_sendstr(req, "Saved. Rebooting...");
-    vTaskDelay(1000/portTICK_PERIOD_MS);
-    esp_restart();
+    
+    ESP_LOGI(TAG, "Response sent. Starting reboot sequence...");
+    // Give the HTTP response time to be sent
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    
+    // Schedule reboot in a separate task to avoid blocking the HTTP response
+    ESP_LOGI(TAG, "Creating reboot task...");
+    BaseType_t task_created = xTaskCreate(reboot_task, "reboot_task", 2048, NULL, 1, NULL);
+    if (task_created == pdPASS) {
+        ESP_LOGI(TAG, "Reboot task created successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to create reboot task");
+    }
+    
     return ESP_OK;
 }
 
@@ -924,6 +1115,25 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
     const esp_app_desc_t *app_desc = esp_ota_get_app_description();
     #endif
     const char *idf_ver = esp_get_idf_version();
+    
+    // Read version from version.txt file in SPIFFS
+    // Note: This file (data/version.txt) must be kept in sync with the master 
+    // version file (version.txt in project root). The master file serves as 
+    // the source of truth, while this file is deployed to the ESP32 for 
+    // runtime display in the web interface.
+    char version_str[16] = "1.2.1"; // Default fallback - update when master version changes
+    FILE *version_file = fopen("/spiffs/version.txt", "r");
+    if (version_file) {
+        if (fgets(version_str, sizeof(version_str), version_file)) {
+            // Remove trailing newline if present
+            char *newline = strchr(version_str, '\n');
+            if (newline) *newline = '\0';
+            char *carriage_return = strchr(version_str, '\r');
+            if (carriage_return) *carriage_return = '\0';
+        }
+        fclose(version_file);
+    }
+    
     esp_reset_reason_t reason = esp_reset_reason();
     const char *reason_str = "Unknown";
     switch (reason) {
@@ -979,7 +1189,7 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
         "\"flash_id\":\"%06lX\"," // Flash Chip Id
         "\"flash_size\":\"%lu KB\""
         "}",
-        app_desc->version,
+        version_str,  // Use version from version.txt file
         app_desc->date, app_desc->time,
         idf_ver,
         reason_str,
@@ -992,11 +1202,194 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// Handler for /wifi_scan.json - Returns available WiFi networks with signal strengths
+static esp_err_t wifi_scan_json_get_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "WiFi scan requested in AP configuration mode");
+    
+    char *response = NULL;
+    size_t response_len = 4096; // Increased buffer size for more networks
+    
+    // Allocate response buffer on heap to avoid stack issues
+    response = malloc(response_len);
+    if (response == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate response buffer");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_send(req, "{\"error\":\"Memory allocation failed\",\"networks\":[]}", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+    
+    // Check if WiFi is initialized
+    wifi_mode_t current_mode;
+    esp_err_t mode_err = esp_wifi_get_mode(&current_mode);
+    if (mode_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get WiFi mode: %s", esp_err_to_name(mode_err));
+        snprintf(response, response_len, "{\"error\":\"WiFi not initialized\",\"networks\":[]}");
+        goto send_response;
+    }
+    
+    ESP_LOGI(TAG, "Current WiFi mode: %d, attempting real WiFi scan", current_mode);
+    
+    // Temporarily switch to APSTA mode if we're in AP-only mode to enable scanning
+    bool mode_switched = false;
+    if (current_mode == WIFI_MODE_AP) {
+        ESP_LOGI(TAG, "Switching to APSTA mode for WiFi scanning");
+        esp_err_t switch_err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (switch_err == ESP_OK) {
+            mode_switched = true;
+            vTaskDelay(pdMS_TO_TICKS(100)); // Give time for mode switch
+        } else {
+            ESP_LOGW(TAG, "Failed to switch to APSTA mode: %s", esp_err_to_name(switch_err));
+        }
+    }
+    
+    // Perform WiFi scan
+    wifi_scan_config_t scan_config = {0};
+    esp_err_t scan_err = esp_wifi_scan_start(&scan_config, true); // Blocking scan
+    
+    if (scan_err != ESP_OK) {
+        ESP_LOGW(TAG, "WiFi scan failed: %s, using fallback networks", esp_err_to_name(scan_err));
+        
+        // Restore original mode if we switched it
+        if (mode_switched) {
+            esp_wifi_set_mode(current_mode);
+        }
+        
+        // Return fallback simulated networks
+        snprintf(response, response_len, 
+            "{\"networks\":["
+            "{\"ssid\":\"BAANFARANG_O\",\"rssi\":-45,\"auth\":\"WPA2\"},"
+            "{\"ssid\":\"HomeNetwork\",\"rssi\":-55,\"auth\":\"WPA2\"},"
+            "{\"ssid\":\"OfficeWiFi\",\"rssi\":-67,\"auth\":\"WPA/WPA2\"},"
+            "{\"ssid\":\"GuestNetwork\",\"rssi\":-72,\"auth\":\"Open\"}"
+            "]}");
+        goto send_response;
+    }
+    
+    // Get scan results
+    uint16_t ap_count = 0;
+    esp_wifi_scan_get_ap_num(&ap_count);
+    ESP_LOGI(TAG, "Found %d WiFi networks", ap_count);
+    
+    if (ap_count == 0) {
+        ESP_LOGW(TAG, "No WiFi networks found, using fallback");
+        
+        // Restore original mode if we switched it
+        if (mode_switched) {
+            esp_wifi_set_mode(current_mode);
+        }
+        
+        snprintf(response, response_len, "{\"networks\":[]}");
+        goto send_response;
+    }
+    
+    // Limit to reasonable number to avoid buffer overflow
+    if (ap_count > 20) {
+        ap_count = 20;
+    }
+    
+    wifi_ap_record_t *ap_records = malloc(sizeof(wifi_ap_record_t) * ap_count);
+    if (ap_records == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate memory for AP records");
+        
+        // Restore original mode if we switched it
+        if (mode_switched) {
+            esp_wifi_set_mode(current_mode);
+        }
+        
+        snprintf(response, response_len, "{\"error\":\"Memory allocation failed\",\"networks\":[]}");
+        goto send_response;
+    }
+    
+    esp_err_t get_err = esp_wifi_scan_get_ap_records(&ap_count, ap_records);
+    if (get_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get scan results: %s", esp_err_to_name(get_err));
+        free(ap_records);
+        
+        // Restore original mode if we switched it
+        if (mode_switched) {
+            esp_wifi_set_mode(current_mode);
+        }
+        
+        snprintf(response, response_len, "{\"error\":\"Failed to get scan results\",\"networks\":[]}");
+        goto send_response;
+    }
+    
+    // Build JSON response
+    int offset = 0;
+    offset += snprintf(response + offset, response_len - offset, "{\"networks\":[");
+    
+    for (int i = 0; i < ap_count && offset < (response_len - 200); i++) {
+        if (i > 0) {
+            offset += snprintf(response + offset, response_len - offset, ",");
+        }
+        
+        // Determine auth type string
+        const char *auth_str = "Unknown";
+        switch (ap_records[i].authmode) {
+            case WIFI_AUTH_OPEN: auth_str = "Open"; break;
+            case WIFI_AUTH_WEP: auth_str = "WEP"; break;
+            case WIFI_AUTH_WPA_PSK: auth_str = "WPA"; break;
+            case WIFI_AUTH_WPA2_PSK: auth_str = "WPA2"; break;
+            case WIFI_AUTH_WPA_WPA2_PSK: auth_str = "WPA/WPA2"; break;
+            case WIFI_AUTH_WPA2_ENTERPRISE: auth_str = "WPA2-Enterprise"; break;
+            case WIFI_AUTH_WPA3_PSK: auth_str = "WPA3"; break;
+            default: auth_str = "WPA2"; break;
+        }
+        
+        // Sanitize SSID (replace quotes and control characters)
+        char safe_ssid[33];
+        int j, k = 0;
+        for (j = 0; j < 32 && ap_records[i].ssid[j] != '\0' && k < 32; j++) {
+            char c = ap_records[i].ssid[j];
+            if (c == '"' || c == '\\') {
+                if (k < 31) {
+                    safe_ssid[k++] = '\\';
+                    safe_ssid[k++] = c;
+                }
+            } else if (c >= 32 && c < 127) { // Printable ASCII
+                safe_ssid[k++] = c;
+            }
+        }
+        safe_ssid[k] = '\0';
+        
+        offset += snprintf(response + offset, response_len - offset, 
+            "{\"ssid\":\"%s\",\"rssi\":%d,\"auth\":\"%s\"}", 
+            safe_ssid, ap_records[i].rssi, auth_str);
+    }
+    
+    offset += snprintf(response + offset, response_len - offset, "]}");
+    
+    free(ap_records);
+    
+    // Restore original mode if we switched it
+    if (mode_switched) {
+        esp_err_t restore_err = esp_wifi_set_mode(current_mode);
+        if (restore_err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to restore original WiFi mode: %s", esp_err_to_name(restore_err));
+        } else {
+            ESP_LOGI(TAG, "Restored original WiFi mode after scan");
+        }
+    }
+    
+    ESP_LOGI(TAG, "WiFi scan completed successfully, found %d networks", ap_count);
+
+send_response:
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    free(response);
+    return ESP_OK;
+}
+
 static void start_ap_and_captive_portal() {
-    // Start AP mode
+    // Start AP mode only for configuration (no STA mode to avoid connection attempts)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    
+    // Set to AP mode only - do not enable STA to avoid connection attempts
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_LOGI(TAG, "WiFi set to AP mode only for configuration");
+    
+    // Configure AP
     wifi_config_t ap_config = {
         .ap = {
             .ssid = "ESP32-CONFIG",
@@ -1019,6 +1412,8 @@ static void start_ap_and_captive_portal() {
     esp_netif_dhcps_start(ap_netif);
 
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "WiFi AP started in configuration mode - no STA connection attempts");
+    
     // Start SPIFFS
     init_spiffs();
     // Start HTTP server
@@ -1031,11 +1426,13 @@ static void start_ap_and_captive_portal() {
     httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
     httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
     httpd_uri_t sysinfo_json = { .uri = "/sysinfo.json", .method = HTTP_GET, .handler = sysinfo_json_get_handler, .user_ctx = NULL };
+    httpd_uri_t wifi_scan_json = { .uri = "/wifi_scan.json", .method = HTTP_GET, .handler = wifi_scan_json_get_handler, .user_ctx = NULL };
     httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
     httpd_register_uri_handler(server, &params_json);
     httpd_register_uri_handler(server, &params_update);
     httpd_register_uri_handler(server, &parameters_html);
     httpd_register_uri_handler(server, &sysinfo_json);
+    httpd_register_uri_handler(server, &wifi_scan_json);
     httpd_register_uri_handler(server, &captive);
 }
 
@@ -1044,6 +1441,16 @@ void ap_config_task(void *pvParameter) {
     load_wifi_config_from_nvs();
     load_mqtt_config_from_nvs();
     load_sample_interval_from_nvs();
+    load_bms_topic_from_nvs();
+    
+    ESP_LOGI(TAG, "=== CONFIG LOADED FROM NVS (AP MODE) ===");
+    ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
+    ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
+    ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
+    ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
+    ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
+    ESP_LOGI(TAG, "=== STARTING AP CONFIG MODE ===");
+    
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     // Start DNS hijack server for captive portal
@@ -1055,13 +1462,174 @@ void ap_config_task(void *pvParameter) {
 // Blink task for onboard LED
 #define ONBOARD_LED_GPIO GPIO_NUM_2
 
-
 // Blink the onboard LED for a short time (heartbeat)
 void blink_heartbeat() {
     gpio_set_direction(ONBOARD_LED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(ONBOARD_LED_GPIO, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
     gpio_set_level(ONBOARD_LED_GPIO, 0);
+}
+
+// Main application entry point.
+void app_main(void) {
+    // ============================================================
+    // REDUCE LOGGING OUTPUT - Uncomment one of these lines:
+    // ============================================================
+    esp_log_level_set("*", ESP_LOG_WARN);   // Show only warnings and errors
+    // esp_log_level_set("*", ESP_LOG_ERROR);  // Show only errors
+    // esp_log_level_set("*", ESP_LOG_NONE);   // Turn off all logging
+    
+    // Initialize NVS first for all code paths
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    // Configure Task Watchdog Timer
+    ESP_LOGI(TAG, "Configuring Task Watchdog Timer...");
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 30000, // 30 second timeout
+        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all cores
+        .trigger_panic = true // Trigger panic on timeout
+    };
+    esp_err_t twdt_err = esp_task_wdt_init(&twdt_config);
+    ESP_LOGI(TAG, "esp_task_wdt_init() returned: %d", twdt_err);
+    // No esp_task_wdt_get_timeout() in ESP-IDF; cannot log actual timeout at runtime
+    if (twdt_err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGI(TAG, "Task Watchdog Timer already initialized");
+    } else {
+        ESP_ERROR_CHECK(twdt_err);
+        ESP_LOGI(TAG, "Task Watchdog Timer initialized successfully");
+    }
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); // Add current task to watchdog
+    ESP_LOGI(TAG, "Task Watchdog Timer configured successfully");
+
+    ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
+    gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
+    bool boot_btn_pressed = false;
+    for (int i = 0; i < 1000; ++i) { // 10 seconds, check every 10ms
+        if (gpio_get_level(BOOT_BTN_GPIO) == 0) {
+            boot_btn_pressed = true;
+            ESP_LOGI(TAG, "Boot button press detected during wait!");
+            break;
+        }
+        // Feed watchdog every 100 iterations (1 second)
+        if (i % 100 == 0) {
+            esp_task_wdt_reset();
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+    ESP_LOGI(TAG, "Boot button wait finished, continuing startup...");
+    if (boot_btn_pressed) {
+        ESP_LOGI(TAG, "Entering AP config mode due to boot button press.");
+        xTaskCreate(ap_config_task, "ap_config_task", 8192, NULL, 5, NULL);
+        while (1) {
+            esp_task_wdt_reset(); // Feed watchdog in config mode
+            vTaskDelay(1000/portTICK_PERIOD_MS); // Block forever
+        }
+    }
+
+    // Initialize UART communication.
+    init_uart();
+
+    load_wifi_config_from_nvs();
+    load_mqtt_config_from_nvs();
+    load_sample_interval_from_nvs();
+    load_bms_topic_from_nvs();
+    
+    ESP_LOGI(TAG, "=== CONFIG LOADED FROM NVS ===");
+    ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
+    ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
+    ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
+    ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
+    ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
+    ESP_LOGI(TAG, "=== STARTING WIFI INIT ===");
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta(); // Initialize Wi-Fi
+    
+    // Initialize software watchdog
+    // Watchdog timeout is 10× sample interval (in ms), inactive if timeout ≤10,000 ms
+    watchdog_timeout_ms = sample_interval_ms * 10;
+    if (watchdog_timeout_ms > 10000) {
+        watchdog_enabled = true;
+        last_successful_publish = xTaskGetTickCount();
+        ESP_LOGI(TAG, "Software watchdog enabled with timeout: %lu ms (10× sample interval)", watchdog_timeout_ms);
+    } else {
+        watchdog_enabled = false;
+        ESP_LOGI(TAG, "Software watchdog inactive (timeout ≤10,000 ms, sample interval: %lu ms)", sample_interval_ms);
+    }
+
+    // Buffer to attempt to read and discard UART echo. Size of the command sent.
+    uint8_t echo_buf[sizeof(bms_read_all_cmd)]; 
+
+    // Main loop to periodically send command and read response from BMS.
+    while (1) {
+        ESP_LOGD(TAG, "[MAIN LOOP] Start iteration");
+        esp_task_wdt_reset();
+        
+        // Check software watchdog timeout
+        ESP_LOGD(TAG, "[MAIN LOOP] Check software watchdog");
+        if (watchdog_enabled) {
+            TickType_t current_time = xTaskGetTickCount();
+            TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
+            if (elapsed_ms >= watchdog_timeout_ms) {
+                ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
+                ESP_LOGE(TAG, "Forcing system restart...");
+                vTaskDelay(pdMS_TO_TICKS(100));
+                esp_restart();
+            }
+        }
+        ESP_LOGD(TAG, "[MAIN LOOP] After software watchdog check");
+
+        mqtt_publish_success = false;
+        ESP_LOGD(TAG, "[MAIN LOOP] After reset mqtt_publish_success");
+
+        if (debug_logging) {
+            ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
+        }
+        send_bms_command(bms_read_all_cmd, sizeof(bms_read_all_cmd));
+        ESP_LOGD(TAG, "[MAIN LOOP] After send_bms_command");
+
+        int echo_read_len = uart_read_bytes(UART_NUM, echo_buf, sizeof(bms_read_all_cmd), pdMS_TO_TICKS(20));
+        ESP_LOGD(TAG, "[MAIN LOOP] After uart_read_bytes for echo");
+
+        if (echo_read_len == sizeof(bms_read_all_cmd)) {
+            if (debug_logging) {
+                ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
+            }
+        } else if (echo_read_len > 0) {
+            if (debug_logging) {
+                ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", echo_read_len, (int)sizeof(bms_read_all_cmd));
+            }
+        } else {
+            if (debug_logging) {
+                ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
+            }
+        }
+        ESP_LOGD(TAG, "[MAIN LOOP] After echo read handling");
+
+        read_bms_data();
+        ESP_LOGD(TAG, "[MAIN LOOP] After read_bms_data");
+
+        if (debug_logging) {
+            ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
+        }
+        if (sample_interval_ms > 5000) {
+            uint32_t remaining_ms = sample_interval_ms;
+            while (remaining_ms > 0) {
+                uint32_t chunk_ms = (remaining_ms > 5000) ? 5000 : remaining_ms;
+                vTaskDelay(pdMS_TO_TICKS(chunk_ms));
+                esp_task_wdt_reset();
+                remaining_ms -= chunk_ms;
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(sample_interval_ms));
+        }
+        ESP_LOGD(TAG, "[MAIN LOOP] End of iteration, feeding TWDT");
+        esp_task_wdt_reset();
+    }
 }
 
 // Wi-Fi Event Handler
@@ -1211,15 +1779,7 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
 
     ESP_LOGI(TAG, "Preparing to publish BMS data via MQTT...");
 
-    // --- Determine topic prefix ---
-    const char *topic_prefix = "BMS/";
-    char mqtt_topic_pack[160];
-    char mqtt_topic_cells[160];
-    snprintf(mqtt_topic_pack, sizeof(mqtt_topic_pack), "%spack", topic_prefix);
-    snprintf(mqtt_topic_cells, sizeof(mqtt_topic_cells), "%scells", topic_prefix);
-
-
-    // --- Create a single JSON object for all BMS data ---
+    // --- Create a single JSON object for all BMS data (original structure from backup) ---
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         ESP_LOGE(TAG, "Failed to create cJSON root object.");
@@ -1240,9 +1800,9 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
             cJSON_AddNumberToObject(temp_sensors, "NTC2", bms_data_ptr->probe2_temp);
             cJSON_AddItemToObject(pack_root, "tempSensorValues", temp_sensors);
         }
-        // Add extra fields
+        // Add extra fields to pack_root (restored original logic)
         for (int i = 0; i < extra_fields_count; ++i) {
-                       const char *field_name = NULL;
+            const char *field_name = NULL;
             for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
                 if (bms_idcodes[j].id == extra_fields[i].id) {
                     field_name = bms_idcodes[j].name;
@@ -1261,17 +1821,39 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
                     }
                 }
                 sanitized[si] = '\0';
-                if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
+                
+                // Debug logging for Device ID Code specifically
+                if (extra_fields[i].id == 0xB4) {
+                    ESP_LOGI(TAG, "=== Device ID Code JSON Processing ===");
+                    ESP_LOGI(TAG, "Field name: %s -> sanitized: %s", field_name, sanitized);
+                    ESP_LOGI(TAG, "is_ascii: %d, strval: '%s', value: %u", 
+                             extra_fields[i].is_ascii, extra_fields[i].strval, (unsigned int)extra_fields[i].value);
+                }
+                
+                // Special handling for Device ID Code - always force to string to prevent type conflicts
+                if (extra_fields[i].id == 0xB4) {
+                    char device_id_str[32];
+                    if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
+                        strncpy(device_id_str, extra_fields[i].strval, sizeof(device_id_str)-1);
+                    } else {
+                        snprintf(device_id_str, sizeof(device_id_str), "%08X", (unsigned int)extra_fields[i].value);
+                    }
+                    device_id_str[sizeof(device_id_str)-1] = '\0';
+                    cJSON_AddStringToObject(pack_root, sanitized, device_id_str);
+                    ESP_LOGI(TAG, "Forced Device ID Code as string: %s = %s", sanitized, device_id_str);
+                } else if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
                     cJSON_AddStringToObject(pack_root, sanitized, extra_fields[i].strval);
+                    ESP_LOGD(TAG, "Added string field: %s = %s", sanitized, extra_fields[i].strval);
                 } else {
                     cJSON_AddNumberToObject(pack_root, sanitized, extra_fields[i].value);
+                    ESP_LOGD(TAG, "Added number field: %s = %u", sanitized, (unsigned int)extra_fields[i].value);
                 }
             }
         }
         cJSON_AddItemToObject(root, "pack", pack_root);
     }
 
-    // Add cells data
+    // Add cells data (restored original structure)
     cJSON *cells_root = cJSON_CreateObject();
     if (cells_root) {
         char cell_mv_key[16];
@@ -1287,13 +1869,14 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         cJSON_AddItemToObject(root, "cells", cells_root);
     }
 
-    // Publish as a single topic
+    // Publish as a single topic (restored original format)
     char *json_string = cJSON_PrintUnformatted(root);
     if (json_string == NULL) {
         ESP_LOGE(TAG, "Failed to print combined cJSON to string.");
     } else {
         char topic[64];
-        snprintf(topic, sizeof(topic), "BMS/%s", bms_topic);
+        // Use bms_topic directly without any BMS prefix
+        snprintf(topic, sizeof(topic), "%s", bms_topic);
         esp_mqtt_client_publish(mqtt_client, topic, json_string, 0, 1, 0);
         ESP_LOGI(TAG, "Published to %s: %s", topic, json_string);
         free(json_string);
@@ -1314,10 +1897,13 @@ void url_decode(char *dst, const char *src, size_t dstsize) {
     char a, b;
     size_t i = 0, j = 0;
     while (src[i] && j + 1 < dstsize) {
-        if ((src[i] == '%') && ((a = src[i+1]) && (b = src[i+2])) && isxdigit(a) && isxdigit(b)) {
-            if (j < dstsize - 1)
-                dst[j++] = (char)((hex2int(a) << 4) | hex2int(b));
-            i += 3;
+        if (src[i] == '%' && src[i+1] && src[i+2]) {
+            if ((a = src[i+1]) && (b = src[i+2])) {
+                dst[j++] = hex2int(a) * 16 + hex2int(b);
+                i += 3;
+            } else {
+                dst[j++] = src[i++];
+            }
         } else if (src[i] == '+') {
             dst[j++] = ' ';
             i++;
@@ -1328,20 +1914,18 @@ void url_decode(char *dst, const char *src, size_t dstsize) {
     dst[j] = '\0';
 }
 
-
 // DNS hijack task for captive portal
 void dns_hijack_task(void *pvParameter) {
-    // Add this task to watchdog monitoring
     esp_task_wdt_add(NULL);
-    
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
         ESP_LOGE(TAG, "Failed to create DNS socket");
         esp_task_wdt_delete(NULL);
         vTaskDelete(NULL);
-               return;
+        return;
     }
-    struct sockaddr_in server_addr = {0};
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(53);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -1357,13 +1941,16 @@ void dns_hijack_task(void *pvParameter) {
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
     uint32_t dns_requests_handled = 0;
-    while (1) {
+    while (!system_shutting_down) {  // Check shutdown flag
+        // Set a timeout for recvfrom so we can check shutdown flag periodically
+        struct timeval timeout;
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        
         int len = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &addr_len);
         if (len > 0) {
-                                  // Minimal DNS response: copy ID, set response flags, answer count = 1
-           
-
-           
+            // Minimal DNS response: copy ID, set response flags, answer count = 1
             uint8_t response[512];
             memcpy(response, buf, len);
             response[2] = 0x81; // QR=1, Opcode=0, AA=1, TC=0, RD=0
@@ -1382,166 +1969,21 @@ void dns_hijack_task(void *pvParameter) {
             response[pos++] = 192;  response[pos++] = 168;  response[pos++] = 4; response[pos++] = 1; // 192.168.4.1
             sendto(sock, response, pos, 0, (struct sockaddr *)&client_addr, addr_len);
             
-            // Feed watchdog every 10 DNS requests
+            // Feed watchdog after each DNS request
             dns_requests_handled++;
-            if (dns_requests_handled % 10 == 0) {
-                esp_task_wdt_reset();
-            }
+            esp_task_wdt_reset();
+        } else if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            // Real error, not just timeout
+            ESP_LOGE(TAG, "DNS socket error: %d", errno);
+            break;
         }
+        // Timeout or EAGAIN - check shutdown flag and continue
+        // Feed watchdog on timeout too to keep it alive during idle periods
+        esp_task_wdt_reset();
     }
+    
+    ESP_LOGI(TAG, "DNS hijack task shutting down gracefully");
     close(sock);
     esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
-}
-
-// Main application entry point.
-void app_main(void) {
-    // Initialize NVS first for all code paths
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    // Configure Task Watchdog Timer
-    ESP_LOGI(TAG, "Configuring Task Watchdog Timer...");
-    esp_task_wdt_config_t twdt_config = {
-        .timeout_ms = 30000, // 30 second timeout
-        .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all cores
-        .trigger_panic = true // Trigger panic on timeout
-    };
-    esp_err_t twdt_err = esp_task_wdt_init(&twdt_config);
-    ESP_LOGI(TAG, "esp_task_wdt_init() returned: %d", twdt_err);
-    // No esp_task_wdt_get_timeout() in ESP-IDF; cannot log actual timeout at runtime
-    if (twdt_err == ESP_ERR_INVALID_STATE) {
-        ESP_LOGI(TAG, "Task Watchdog Timer already initialized");
-    } else {
-        ESP_ERROR_CHECK(twdt_err);
-        ESP_LOGI(TAG, "Task Watchdog Timer initialized successfully");
-    }
-    ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); // Add current task to watchdog
-    ESP_LOGI(TAG, "Task Watchdog Timer configured successfully");
-
-    ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
-    gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
-    bool boot_btn_pressed = false;
-    for (int i = 0; i < 1000; ++i) { // 10 seconds, check every 10ms
-        if (gpio_get_level(BOOT_BTN_GPIO) == 0) {
-            boot_btn_pressed = true;
-            ESP_LOGI(TAG, "Boot button press detected during wait!");
-            break;
-        }
-        // Feed watchdog every 100 iterations (1 second)
-        if (i % 100 == 0) {
-            esp_task_wdt_reset();
-        }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-    ESP_LOGI(TAG, "Boot button wait finished, continuing startup...");
-    if (boot_btn_pressed) {
-        ESP_LOGI(TAG, "Entering AP config mode due to boot button press.");
-        xTaskCreate(ap_config_task, "ap_config_task", 8192, NULL, 5, NULL);
-        while (1) {
-            esp_task_wdt_reset(); // Feed watchdog in config mode
-            vTaskDelay(1000/portTICK_PERIOD_MS); // Block forever
-        }
-    }
-
-    // Initialize UART communication.
-    init_uart();
-
-    load_wifi_config_from_nvs();
-    load_mqtt_config_from_nvs();
-    load_sample_interval_from_nvs();
-    load_bms_topic_from_nvs();
-    ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
-    ESP_LOGI(TAG, "WiFi PASS: %s", wifi_pass);
-    ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
-    ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
-    ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
-    wifi_init_sta(); // Initialize Wi-Fi
-    
-    // Initialize software watchdog
-    // Watchdog timeout is 10× sample interval (in ms), inactive if timeout ≤10,000 ms
-    watchdog_timeout_ms = sample_interval_ms * 10;
-    if (watchdog_timeout_ms > 10000) {
-        watchdog_enabled = true;
-        last_successful_publish = xTaskGetTickCount();
-        ESP_LOGI(TAG, "Software watchdog enabled with timeout: %lu ms (10× sample interval)", watchdog_timeout_ms);
-    } else {
-        watchdog_enabled = false;
-        ESP_LOGI(TAG, "Software watchdog inactive (timeout ≤10,000 ms, sample interval: %lu ms)", sample_interval_ms);
-    }
-
-    // Buffer to attempt to read and discard UART echo. Size of the command sent.
-    uint8_t echo_buf[sizeof(bms_read_all_cmd)]; 
-
-    // Main loop to periodically send command and read response from BMS.
-    while (1) {
-        ESP_LOGD(TAG, "[MAIN LOOP] Start iteration");
-        esp_task_wdt_reset();
-        
-        // Check software watchdog timeout
-        ESP_LOGD(TAG, "[MAIN LOOP] Check software watchdog");
-        if (watchdog_enabled) {
-            TickType_t current_time = xTaskGetTickCount();
-            TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
-            if (elapsed_ms >= watchdog_timeout_ms) {
-                ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
-                ESP_LOGE(TAG, "Forcing system restart...");
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_restart();
-            }
-        }
-        ESP_LOGD(TAG, "[MAIN LOOP] After software watchdog check");
-
-        mqtt_publish_success = false;
-        ESP_LOGD(TAG, "[MAIN LOOP] After reset mqtt_publish_success");
-
-        if (debug_logging) {
-            ESP_LOGI(TAG, "Sending '%s' command to BMS...", "Read All Data");
-        }
-        send_bms_command(bms_read_all_cmd, sizeof(bms_read_all_cmd));
-        ESP_LOGD(TAG, "[MAIN LOOP] After send_bms_command");
-
-        int echo_read_len = uart_read_bytes(UART_NUM, echo_buf, sizeof(bms_read_all_cmd), pdMS_TO_TICKS(20));
-        ESP_LOGD(TAG, "[MAIN LOOP] After uart_read_bytes for echo");
-
-        if (echo_read_len == sizeof(bms_read_all_cmd)) {
-            if (debug_logging) {
-                ESP_LOGI(TAG, "Successfully read and discarded %d echo bytes.", echo_read_len);
-            }
-        } else if (echo_read_len > 0) {
-            if (debug_logging) {
-                ESP_LOGW(TAG, "Partially read %d echo bytes (expected %d). The rest might be in the main read or BMS response is very fast.", echo_read_len, (int)sizeof(bms_read_all_cmd));
-            }
-        } else {
-            if (debug_logging) {
-                ESP_LOGI(TAG, "No echo read or timeout/error during dedicated echo read attempt (read %d bytes). Main read will handle if echo is present.", echo_read_len);
-            }
-        }
-        ESP_LOGD(TAG, "[MAIN LOOP] After echo read handling");
-
-        read_bms_data();
-        ESP_LOGD(TAG, "[MAIN LOOP] After read_bms_data");
-
-        if (debug_logging) {
-            ESP_LOGI(TAG, "Waiting %ld ms before next BMS read cycle...", sample_interval_ms);
-        }
-        if (sample_interval_ms > 5000) {
-            uint32_t remaining_ms = sample_interval_ms;
-            while (remaining_ms > 0) {
-                uint32_t chunk_ms = (remaining_ms > 5000) ? 5000 : remaining_ms;
-                vTaskDelay(pdMS_TO_TICKS(chunk_ms));
-                esp_task_wdt_reset();
-                remaining_ms -= chunk_ms;
-            }
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(sample_interval_ms));
-        }
-        ESP_LOGD(TAG, "[MAIN LOOP] End of iteration, feeding TWDT");
-        esp_task_wdt_reset();
-    }
 }

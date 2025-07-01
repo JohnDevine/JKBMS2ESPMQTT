@@ -127,7 +127,29 @@
         </div>
         <form id="paramsForm">
             <label>WiFi SSID:
-                <input type="text" name="ssid" id="ssid" required>
+                <!-- Working div-based dropdown for iPad -->
+                <div style="margin-top: 0.3em;">
+                    <div id="custom-dropdown" style="position: relative; width: 100%;">
+                        <div id="dropdown-button" style="padding: 12px; border: 2px solid #007AFF; border-radius: 8px; background: white; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 16px; min-height: 22px;">
+                            <span id="dropdown-text">Select a network...</span>
+                            <span style="font-size: 12px;">▼</span>
+                        </div>
+                        <div id="dropdown-options" style="position: absolute; top: 100%; left: 0; right: 0; background: white; border: 2px solid #007AFF; border-top: none; border-radius: 0 0 8px 8px; display: none; max-height: 200px; overflow-y: auto; z-index: 1000;">
+                            <div class="dropdown-option" data-value="">Select a network...</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-ssid" name="ssid" value="" required>
+                </div>
+                
+                <div style="display: flex; gap: 0.5em; align-items: center; margin-top: 0.5em;">
+                    <button type="button" id="scan_btn" style="width: 100%; padding: 12px 16px; background: var(--primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; min-height: 44px;">Scan Networks</button>
+                </div>
+                <div style="margin-top: 0.5em;">
+                    <label style="font-size: 0.9em; color: #666;">
+                        <input type="checkbox" id="manual_ssid_cb" style="margin-right: 0.3em;"> Enter SSID manually
+                    </label>
+                </div>
+                <input type="text" name="ssid" id="ssid" placeholder="Enter SSID manually" style="margin-top: 0.3em; display: none;" required>
             </label>
             <label>WiFi Password:
                 <input type="password" name="password" id="password" required>
@@ -146,13 +168,368 @@
         <div id="msg"></div>
     </div>
     <script>
+    // Function to get signal strength description
+    function getSignalStrength(rssi) {
+        if (rssi >= -50) return "Excellent";
+        if (rssi >= -60) return "Good";
+        if (rssi >= -70) return "Fair";
+        if (rssi >= -80) return "Weak";
+        return "Very Weak";
+    }
+
+    // Custom dropdown functions for iPad compatibility
+    function selectCustomDropdownOption(value, text) {
+        const dropdownText = document.getElementById('dropdown-text');
+        const selectedSsid = document.getElementById('selected-ssid');
+        const dropdownOptions = document.getElementById('dropdown-options');
+        
+        if (dropdownText) {
+            dropdownText.textContent = text || 'Select a network...';
+        }
+        
+        if (selectedSsid) {
+            selectedSsid.value = value || '';
+        }
+        
+        if (dropdownOptions) {
+            dropdownOptions.style.display = 'none';
+        }
+    }
+    
+    function toggleCustomDropdown() {
+        const dropdownOptions = document.getElementById('dropdown-options');
+        
+        if (dropdownOptions) {
+            const isVisible = dropdownOptions.style.display !== 'none';
+            dropdownOptions.style.display = isVisible ? 'none' : 'block';
+        }
+    }
+    
+    function updateCustomDropdownWithNetworks(networks) {
+        const dropdownOptions = document.getElementById('dropdown-options');
+        
+        if (!dropdownOptions) {
+            return;
+        }
+        
+        // Clear existing options and add default option
+        dropdownOptions.innerHTML = '';
+        
+        // Add default option
+        const defaultOption = document.createElement('div');
+        defaultOption.className = 'dropdown-option';
+        defaultOption.setAttribute('data-value', '');
+        defaultOption.textContent = 'Select a network...';
+        defaultOption.style.cssText = 'padding: 12px; cursor: pointer; border-bottom: 1px solid #eee; font-size: 16px; min-height: 22px; display: flex; align-items: center; color: #666;';
+        
+        defaultOption.addEventListener('click', function() {
+            selectCustomDropdownOption('', 'Select a network...');
+        });
+        
+        dropdownOptions.appendChild(defaultOption);
+        
+        // Sort networks by signal strength (strongest first)
+        networks.sort((a, b) => b.rssi - a.rssi);
+        
+        // Add network options
+        networks.forEach((network, index) => {
+            if (network.ssid && network.ssid.trim() !== '') {
+                const option = document.createElement('div');
+                option.className = 'dropdown-option';
+                option.setAttribute('data-value', network.ssid);
+                
+                const signalDesc = getSignalStrength(network.rssi);
+                const authDesc = network.auth === 'Open' ? ' (Open)' : ` (${network.auth})`;
+                const displayText = `${network.ssid} (${network.rssi}dBm - ${signalDesc})${authDesc}`;
+                option.textContent = displayText;
+                
+                option.style.cssText = 'padding: 12px; cursor: pointer; border-bottom: 1px solid #eee; font-size: 16px; min-height: 22px; display: flex; align-items: center;';
+                
+                // Add hover effect
+                option.addEventListener('mouseenter', function() {
+                    this.style.backgroundColor = '#f0f0f0';
+                });
+                option.addEventListener('mouseleave', function() {
+                    this.style.backgroundColor = '';
+                });
+                
+                // Add click handler
+                option.addEventListener('click', function() {
+                    selectCustomDropdownOption(network.ssid, displayText);
+                });
+                
+                dropdownOptions.appendChild(option);
+            }
+        });
+    }
+
+    // WiFi scan function to get real networks
+    function scanWiFiNetworks() {
+        const scanBtn = document.getElementById('scan_btn');
+        
+        if (!scanBtn) {
+            return;
+        }
+        
+        scanBtn.textContent = 'Scanning...';
+        scanBtn.disabled = true;
+        
+        // Add a timeout to prevent hanging
+        const timeoutId = setTimeout(() => {
+            console.error('WiFi scan timeout - no response after 10 seconds');
+            scanBtn.textContent = 'Scan Networks';
+            scanBtn.disabled = false;
+            
+            // Enable manual entry if scan times out
+            const manualCheckbox = document.getElementById('manual_ssid_cb');
+            if (manualCheckbox) {
+                manualCheckbox.checked = true;
+                updateManualInputVisibility();
+            }
+            
+            // Show a user-friendly message
+            const dropdownText = document.getElementById('dropdown-text');
+            if (dropdownText) {
+                dropdownText.textContent = 'Scan failed - enter SSID manually';
+                dropdownText.style.color = '#ff6b6b';
+            }
+        }, 10000); // 10 second timeout
+        
+        fetch('/wifi_scan.json')
+        .then(response => {
+            clearTimeout(timeoutId);
+            if (!response.ok) {
+                throw new Error('Network scan failed with status: ' + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (!data.networks || !Array.isArray(data.networks)) {
+                throw new Error('Invalid scan data format');
+            }
+            
+            if (data.networks.length === 0) {
+                console.warn('No WiFi networks found in scan');
+                // Enable manual entry if no networks found
+                const manualCheckbox = document.getElementById('manual_ssid_cb');
+                if (manualCheckbox) {
+                    manualCheckbox.checked = true;
+                    updateManualInputVisibility();
+                }
+                
+                const dropdownText = document.getElementById('dropdown-text');
+                if (dropdownText) {
+                    dropdownText.textContent = 'No networks found - enter SSID manually';
+                    dropdownText.style.color = '#ff6b6b';
+                }
+            } else {
+                updateCustomDropdownWithNetworks(data.networks);
+                
+                // Reset dropdown text color in case it was changed due to error
+                const dropdownText = document.getElementById('dropdown-text');
+                if (dropdownText) {
+                    dropdownText.style.color = '';
+                }
+            }
+        })
+        .catch(error => {
+            clearTimeout(timeoutId);
+            console.error('WiFi scan error:', error.message);
+            
+            // Enable manual entry on error
+            const manualCheckbox = document.getElementById('manual_ssid_cb');
+            if (manualCheckbox) {
+                manualCheckbox.checked = true;
+                updateManualInputVisibility();
+            }
+            
+            // Show error in dropdown
+            const dropdownText = document.getElementById('dropdown-text');
+            if (dropdownText) {
+                dropdownText.textContent = 'Scan failed - enter SSID manually';
+                dropdownText.style.color = '#ff6b6b';
+            }
+        })
+        .finally(() => {
+            scanBtn.textContent = 'Scan Networks';
+            scanBtn.disabled = false;
+        });
+    }
+
+    // Function to update manual input visibility
+    function updateManualInputVisibility() {
+        const manualCheckbox = document.getElementById('manual_ssid_cb');
+        const manualInput = document.getElementById('ssid');
+        const customDropdown = document.getElementById('custom-dropdown');
+        const selectedSsid = document.getElementById('selected-ssid');
+        
+        if (!manualCheckbox || !manualInput || !customDropdown || !selectedSsid) {
+            return;
+        }
+        
+        if (manualCheckbox.checked) {
+            // Manual input mode
+            customDropdown.style.display = 'none';
+            manualInput.style.display = 'block';
+            manualInput.required = true;
+            selectedSsid.required = false;
+        } else {
+            // Dropdown mode (default)
+            customDropdown.style.display = 'block';
+            customDropdown.style.visibility = 'visible';
+            customDropdown.style.opacity = '1';
+            manualInput.style.display = 'none';
+            manualInput.required = false;
+            selectedSsid.required = true;
+        }
+    }
+    
+    // Wait for DOM to be ready
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get custom dropdown elements  
+        const manualCheckbox = document.getElementById('manual_ssid_cb');
+        const manualInput = document.getElementById('ssid');
+        const customDropdown = document.getElementById('custom-dropdown');
+        const dropdownButton = document.getElementById('dropdown-button');
+        const dropdownOptions = document.getElementById('dropdown-options');
+        
+        if (customDropdown) {
+            // Force dropdown to be visible
+            customDropdown.style.display = 'block';
+            customDropdown.style.visibility = 'visible';
+            customDropdown.style.opacity = '1';
+        }
+        
+        // Ensure manual checkbox is unchecked by default
+        if (manualCheckbox) {
+            manualCheckbox.checked = false;
+        }
+        
+        // Set up manual input checkbox handler
+        if (manualCheckbox) {
+            manualCheckbox.addEventListener('change', function() {
+                updateManualInputVisibility();
+            });
+        }
+        
+        // Initialize dropdown and manual input state
+        updateManualInputVisibility();
+        
+        // Set up scan button
+        const scanBtn = document.getElementById('scan_btn');
+        if (scanBtn) {
+            scanBtn.addEventListener('click', function() {
+                scanWiFiNetworks();
+            });
+        }
+        
+        // Auto-scan on page load with delay to let the ESP32 fully initialize
+        setTimeout(() => {
+            scanWiFiNetworks();
+        }, 2000);
+        
+        // Set up custom dropdown event handlers
+        if (dropdownButton && dropdownOptions) {
+            // Click handler for dropdown button
+            dropdownButton.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleCustomDropdown();
+            });
+            
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!dropdownButton.contains(e.target) && !dropdownOptions.contains(e.target)) {
+                    dropdownOptions.style.display = 'none';
+                }
+            });
+        }
+    });
+
     // Fetch current values via AJAX and populate fields
     fetch('/params.json').then(r => r.json()).then(cfg => {
-        document.getElementById('ssid').value = cfg.ssid || '';
+        console.log('Loaded config:', cfg);
+        console.log('BMS Topic from config:', cfg.bms_topic);
+        
+        // Immediately populate all fields except SSID
         document.getElementById('password').value = cfg.password || '';
         document.getElementById('mqtt_url').value = cfg.mqtt_url || '';
         document.getElementById('sample_interval').value = cfg.sample_interval || 5000;
-        document.getElementById('bms_topic').value = cfg.bms_topic || 'JKBMS';
+        
+        // Handle BMS Topic specifically with debug logging
+        const bmsTopicInput = document.getElementById('bms_topic');
+        const bmsTopicValue = cfg.bms_topic || 'JKBMS';
+        console.log('Setting BMS Topic to:', bmsTopicValue);
+        bmsTopicInput.value = bmsTopicValue;
+        console.log('BMS Topic input value after setting:', bmsTopicInput.value);
+        
+        // Handle SSID immediately if we have one saved
+        if (cfg.ssid) {
+            console.log('Found saved SSID, setting up manual entry immediately:', cfg.ssid);
+            const manualCheckbox = document.getElementById('manual_ssid_cb');
+            const manualInput = document.getElementById('ssid');
+            const dropdownText = document.getElementById('dropdown-text');
+            
+            // Set manual entry mode with saved SSID as default
+            manualCheckbox.checked = true;
+            updateManualInputVisibility();
+            manualInput.value = cfg.ssid;
+            
+            // Update dropdown text to show we have a saved SSID
+            if (dropdownText) {
+                dropdownText.textContent = `Saved: ${cfg.ssid} (scanning for networks...)`;
+                dropdownText.style.color = '#666';
+            }
+        }
+        
+        // Set the current SSID in custom dropdown if it exists, otherwise keep manual entry
+        const selectedSsid = document.getElementById('selected-ssid');
+        const dropdownText = document.getElementById('dropdown-text');
+        const manualInput = document.getElementById('ssid');
+        const manualCheckbox = document.getElementById('manual_ssid_cb');
+        
+        // Wait for scan to complete, then try to match SSID
+        setTimeout(() => {
+            if (cfg.ssid) {
+                console.log('Looking for saved SSID in scan results:', cfg.ssid);
+                const dropdownOptions = document.getElementById('dropdown-options');
+                let found = false;
+                
+                if (dropdownOptions) {
+                    // Look for matching SSID in custom dropdown options
+                    const options = dropdownOptions.querySelectorAll('.dropdown-option');
+                    for (let option of options) {
+                        const optionValue = option.getAttribute('data-value');
+                        if (optionValue === cfg.ssid) {
+                            console.log('Found saved SSID in dropdown, switching to dropdown mode:', cfg.ssid);
+                            // Switch back to dropdown mode since we found the SSID
+                            manualCheckbox.checked = false;
+                            updateManualInputVisibility();
+                            selectCustomDropdownOption(cfg.ssid, option.textContent);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // If not found in dropdown, keep manual entry mode
+                if (!found) {
+                    console.log('Saved SSID not found in scan results, keeping manual entry mode:', cfg.ssid);
+                    // Update dropdown text to indicate manual entry is being used
+                    if (dropdownText) {
+                        dropdownText.textContent = `Using saved: ${cfg.ssid}`;
+                        dropdownText.style.color = '#666';
+                    }
+                } else {
+                    console.log('Successfully selected saved SSID from dropdown');
+                }
+            } else {
+                console.log('No saved SSID found');
+            }
+        }, 4000); // Give scan 4 seconds to complete (includes the 2 second delay + scan time)
+
+    }).catch(err => {
+        console.error('Error fetching params.json:', err.message);
     });
 
     // Fetch system info and populate display-only fields
@@ -177,11 +554,58 @@
         document.getElementById('sysinfo_version').textContent = 'Error loading system info';
     });
 
+    // Debug: Also fetch params.json again to see what the server is actually sending
+    setTimeout(() => {
+        console.log('=== DEBUG: Fetching params.json again to verify server response ===');
+        fetch('/params.json').then(r => r.text()).then(rawText => {
+            console.log('Raw params.json response:', rawText);
+            try {
+                const parsed = JSON.parse(rawText);
+                console.log('Parsed params.json:', parsed);
+                console.log('BMS Topic in response:', parsed.bms_topic);
+            } catch (e) {
+                console.error('Failed to parse params.json:', e);
+            }
+        }).catch(err => {
+            console.error('Failed to fetch params.json for debug:', err);
+        });
+    }, 5000);
+
     // Handle form submit via AJAX
     document.getElementById('paramsForm').addEventListener('submit', function(e) {
         e.preventDefault();
         const form = e.target;
-        const data = new URLSearchParams(new FormData(form)).toString();
+        
+        // Get SSID from either manual input or custom dropdown
+        const manualCheckbox = document.getElementById('manual_ssid_cb');
+        const selectedSsid = document.getElementById('selected-ssid');
+        const manualInput = document.getElementById('ssid');
+        
+        let ssidValue = '';
+        
+        if (manualCheckbox.checked) {
+            // Manual input mode
+            ssidValue = manualInput.value;
+        } else {
+            // Dropdown mode
+            ssidValue = selectedSsid.value;
+        }
+        
+        console.log('Form submission - Manual mode:', manualCheckbox.checked, 'SSID value:', ssidValue);
+        
+        if (!ssidValue || ssidValue.trim() === '') {
+            document.getElementById('msg').textContent = 'Please select or enter a WiFi SSID';
+            document.getElementById('msg').style.color = 'red';
+            return;
+        }
+        
+        // Create form data with the correct SSID
+        const formData = new FormData(form);
+        formData.set('ssid', ssidValue); // Override with selected/entered SSID
+        
+        console.log('Submitting form with SSID:', ssidValue);
+        
+        const data = new URLSearchParams(formData).toString();
         fetch('/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -189,12 +613,15 @@
         }).then(r => {
             if (r.ok) {
                 document.getElementById('msg').textContent = 'Saved! Rebooting...';
+                document.getElementById('msg').style.color = 'green';
                 setTimeout(() => location.reload(), 4000);
             } else {
                 document.getElementById('msg').textContent = 'Error saving!';
+                document.getElementById('msg').style.color = 'red';
             }
         }).catch(() => {
             document.getElementById('msg').textContent = 'Network error!';
+            document.getElementById('msg').style.color = 'red';
         });
     });
     </script>

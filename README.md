@@ -33,6 +33,12 @@ The onboard LED (GPIO2) provides visual confirmation of system health:
 3. **JKBMS JIKONG RS485 CAN module and LCD display Adapter**
 4. **JK BMS**
 
+## Hardware Setup Example
+
+![Project Hardware Running](Documents/Images/ProjectHardwareRunning.jpg)
+
+*ESP32 development setup showing the actual hardware configuration with JK BMS, RS485 interface, and monitoring system in operation.*
+
 ## Where to Buy
 
 I just found this on AliExpress: THB229.89 | 1-10pcs ESP32 WROOM-32 ESP32-S Development Board WiFi+Bluetooth-compatible TYPE-C ESP32 30Pin ESP32 Nodemcu Development Module  
@@ -121,6 +127,80 @@ The default environment is set for `esp32doit-devkit-v1` in `platformio.ini`. If
 
 ## License
 See LICENSE file.
+
+## Version Management
+
+This project uses a dual-file version management system for consistency between development and runtime display.
+
+### Version Files
+- **Master Version File:** `version.txt` (project root)
+  - **Purpose:** Source of truth for project version
+  - **Usage:** Update this file when releasing new versions
+  - **Version Control:** Track version changes in git commits
+  
+- **Runtime Version File:** `data/version.txt` (SPIFFS filesystem)
+  - **Purpose:** Displays version in web interface
+  - **Usage:** Must be kept in sync with master version file
+  - **Deployment:** Gets uploaded to ESP32 via SPIFFS
+
+### Version Update Process
+1. **Update master version:** Edit `version.txt` in project root
+2. **Sync to runtime version:** Copy the same version to `data/version.txt`
+3. **Build filesystem:** `pio run --target buildfs`
+4. **Upload filesystem:** `pio run --target uploadfs`
+5. **Build and upload firmware:** `pio run --target upload`
+
+### Important Notes
+- **Keep files in sync:** Both version files must contain identical version numbers
+- **Web interface:** Reads version from `/spiffs/version.txt` (the data/ directory file)
+- **Documentation:** Update README and any version references when releasing
+- **Format:** Use semantic versioning (e.g., 1.2.1) without extra whitespace
+
+**Current Version:** 1.2.1
+
+## Programming Documentation
+
+This project includes comprehensive programming documentation to help developers understand the codebase architecture and implementation details.
+
+### High-Level Programming Overview
+**Location:** `Planning-prompts/high-level-programming-overview.md`
+
+**Purpose:** Provides a high-level architectural overview of all functions in the firmware, organized by functional area. This document is ideal for:
+- **New developers** getting familiar with the codebase
+- **System architects** understanding overall design
+- **Code reviewers** needing functional context
+- **Feature planning** and system modifications
+
+**Contents:**
+- Function signatures with clear purpose descriptions
+- Organization by functional categories (UART, MQTT, WiFi, etc.)
+- Program flow summary and system architecture
+- Key data structures and configuration constants
+- No implementation details - focuses on "what" rather than "how"
+
+### Low-Level Programming Overview  
+**Location:** `Planning-prompts/low-level-programming-overview.md`
+
+**Purpose:** Provides detailed implementation analysis including internal logic, parameter specifications, and protocol details. This document is essential for:
+- **Debugging** and troubleshooting issues
+- **Code modification** and feature development
+- **Performance optimization** and tuning
+- **Protocol understanding** and integration work
+
+**Contents:**
+- Complete parameter lists with types and descriptions
+- Step-by-step internal logic breakdown for each function
+- Data structure definitions with field explanations
+- BMS communication protocol byte-by-byte documentation
+- Error handling mechanisms and memory management details
+- Hardware interface specifications (GPIO, UART, WiFi, etc.)
+- Network protocol implementation details
+
+### Usage Recommendations
+- **Start with high-level overview** to understand system architecture
+- **Reference low-level overview** when modifying specific functions
+- **Use both together** for comprehensive understanding during development
+- **Keep documents updated** when making significant code changes
 
 ## Software Watchdog Timer (System Reliability)
 
@@ -237,3 +317,62 @@ The following logs are **always** shown regardless of the debug setting:
 - **System Monitoring:** Watchdog and critical logs are always visible
 
 This approach ensures essential system information is always logged while allowing detailed debugging when needed.
+
+## Debug Logging Configuration
+
+This project supports detailed debug logging to help with troubleshooting and development.
+
+### Global Log Level Configuration
+
+**Method 1: PlatformIO menuconfig (Recommended)**
+```sh
+pio run --target menuconfig
+```
+Navigate to: `Component config > Log output > Default log verbosity`
+- Set to **Debug** for ESP_LOGD() messages
+- Set to **Verbose** for ESP_LOGV() messages  
+- Set to **Info** for normal operation (default level)
+
+**Method 2: Runtime Configuration**
+```c
+// In your code, set global log level
+esp_log_level_set("*", ESP_LOG_DEBUG);        // All modules to DEBUG
+esp_log_level_set("BMS_READER", ESP_LOG_DEBUG); // Specific module only
+```
+
+### Per-File Debug Logging
+
+To enable debug logging for the main BMS code specifically:
+
+1. **Edit `src/main.c`** - Uncomment the line at the top:
+   ```c
+   #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
+   ```
+
+2. **Rebuild the project:**
+   ```sh
+   pio run
+   ```
+
+### Log Levels (Priority: High → Low)
+- **ESP_LOG_ERROR (E)** - Error conditions, always shown
+- **ESP_LOG_WARN (W)** - Warning conditions  
+- **ESP_LOG_INFO (I)** - Normal operational messages (default level)
+- **ESP_LOG_DEBUG (D)** - Debug information for troubleshooting
+- **ESP_LOG_VERBOSE (V)** - Detailed verbose output
+
+### Example Debug Output
+When debug logging is enabled, you'll see detailed information about:
+- BMS data parsing and field extraction
+- MQTT connection and publish events
+- WiFi scanning and connection details
+- Configuration loading/saving
+- Device ID code processing
+- JSON generation and structure
+
+### Monitoring Serial Output
+```sh
+pio device monitor --baud 115200
+```
+
+**Note:** Debug logging significantly increases serial output and may impact performance. Use INFO level for production deployments.
