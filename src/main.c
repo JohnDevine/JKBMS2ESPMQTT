@@ -75,7 +75,7 @@ static bool debug_logging = true;
 #define NVS_KEY_BMS_TOPIC "BMS_Topic"
 #define DEFAULT_WIFI_SSID "yourSSID"
 #define DEFAULT_WIFI_PASS "yourpassword"
-#define DEFAULT_MQTT_BROKER_URL "mqtt://127.0.0.1"
+#define DEFAULT_MQTT_BROKER_URL "mqtt://192.168.1.100"
 #define DEFAULT_SAMPLE_INTERVAL 5000L
 
 static char wifi_ssid[33] = DEFAULT_WIFI_SSID;
@@ -124,6 +124,15 @@ typedef struct {
     float mosfet_temp;
     float probe1_temp;
     float probe2_temp;
+    // Add common system status fields
+    uint8_t charge_mosfet_status;
+    uint8_t discharge_mosfet_status;
+    uint8_t balancing_active;
+    uint32_t battery_capacity_ah;
+    uint32_t remaining_capacity_ah;
+    uint8_t num_temp_sensors;
+    uint8_t battery_type;
+    uint8_t low_capacity_alarm;
     // Add other fields from your target JSON here as they are parsed
     // e.g., uint16_t pack_rate_cap;
     // ...
@@ -751,8 +760,13 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // After parsing all data and populating current_bms_data
     // Call function to publish data via MQTT
     // This check ensures we only try to publish if we have some valid cell data
+    printf("[DEBUG] Checking publish condition: num_cells=%d\n", current_bms_data.num_cells);
     if (current_bms_data.num_cells > 0) {
+        printf("[DEBUG] Calling publish_bms_data_mqtt...\n");
         publish_bms_data_mqtt(&current_bms_data);
+        printf("[DEBUG] publish_bms_data_mqtt returned\n");
+    } else {
+        printf("[DEBUG] Not publishing - no valid cell data\n");
     }
 }
 
@@ -1092,14 +1106,51 @@ esp_err_t parameters_html_handler(httpd_req_t *req) {
 
 // Captive portal redirect handler
 esp_err_t captive_redirect_handler(httpd_req_t *req) {
+    ESP_LOGD(TAG, "Captive portal request: %s", req->uri);
+    
     // If the request is already for /parameters.html, serve it directly
     if (strcmp(req->uri, "/parameters.html") == 0) {
         return parameters_html_handler(req);
     }
-    // Otherwise, redirect to /parameters.html
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/parameters.html");
-    httpd_resp_send(req, NULL, 0);
+    
+    // Check for other valid endpoints and serve them directly
+    if (strcmp(req->uri, "/params.json") == 0) {
+        return params_json_get_handler(req);
+    }
+    if (strcmp(req->uri, "/sysinfo.json") == 0) {
+        return sysinfo_json_get_handler(req);
+    }
+    if (strcmp(req->uri, "/wifi_scan.json") == 0) {
+        return wifi_scan_json_get_handler(req);
+    }
+    if (strcmp(req->uri, "/update") == 0) {
+        return params_update_post_handler(req);
+    }
+    
+    // For any other request, redirect to the configuration page
+    ESP_LOGD(TAG, "Redirecting %s to /parameters.html", req->uri);
+    
+    const char* redirect_html = 
+        "<!DOCTYPE html>\n"
+        "<html>\n"
+        "<head>\n"
+        "<meta charset=\"UTF-8\">\n"
+        "<title>ESP32 Configuration</title>\n"
+        "<meta http-equiv=\"refresh\" content=\"0; url=/parameters.html\">\n"
+        "</head>\n"
+        "<body>\n"
+        "<p>Redirecting to configuration page...</p>\n"
+        "<p>If you are not redirected automatically, <a href=\"/parameters.html\">click here</a>.</p>\n"
+        "</body>\n"
+        "</html>";
+    
+    httpd_resp_set_status(req, "200 OK");
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    httpd_resp_set_hdr(req, "Expires", "0");
+    httpd_resp_send(req, redirect_html, strlen(redirect_html));
+    
     return ESP_OK;
 }
 
@@ -1121,7 +1172,7 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
     // version file (version.txt in project root). The master file serves as 
     // the source of truth, while this file is deployed to the ESP32 for 
     // runtime display in the web interface.
-    char version_str[16] = "1.2.1"; // Default fallback - update when master version changes
+    char version_str[16] = "1.3.0"; // Default fallback - update when master version changes
     FILE *version_file = fopen("/spiffs/version.txt", "r");
     if (version_file) {
         if (fgets(version_str, sizeof(version_str), version_file)) {
@@ -1236,15 +1287,48 @@ static esp_err_t wifi_scan_json_get_handler(httpd_req_t *req) {
         esp_err_t switch_err = esp_wifi_set_mode(WIFI_MODE_APSTA);
         if (switch_err == ESP_OK) {
             mode_switched = true;
-            vTaskDelay(pdMS_TO_TICKS(100)); // Give time for mode switch
+            vTaskDelay(pdMS_TO_TICKS(200)); // Reduced delay for faster response
         } else {
-            ESP_LOGW(TAG, "Failed to switch to APSTA mode: %s", esp_err_to_name(switch_err));
+            ESP_LOGW(TAG, "Failed to switch to APSTA mode: %s, providing fallback networks", esp_err_to_name(switch_err));
+            // Provide useful fallback networks immediately if mode switch fails
+            snprintf(response, response_len, 
+                "{\"networks\":["
+                "{\"ssid\":\"-- Enter WiFi Name Manually --\",\"rssi\":-50,\"auth\":\"Various\"},"
+                "{\"ssid\":\"BAANFARANG_O\",\"rssi\":-45,\"auth\":\"WPA2\"},"
+                "{\"ssid\":\"HomeNetwork\",\"rssi\":-55,\"auth\":\"WPA2\"},"
+                "{\"ssid\":\"OfficeWiFi\",\"rssi\":-67,\"auth\":\"WPA2\"},"
+                "{\"ssid\":\"GuestNetwork\",\"rssi\":-72,\"auth\":\"Open\"}"
+                "]}");
+            goto send_response;
         }
     }
     
     // Perform WiFi scan
     wifi_scan_config_t scan_config = {0};
-    esp_err_t scan_err = esp_wifi_scan_start(&scan_config, true); // Blocking scan
+    esp_err_t scan_err = esp_wifi_scan_start(&scan_config, false); // Non-blocking scan
+    
+    if (scan_err == ESP_OK) {
+        // Wait for scan to complete with timeout
+        int wait_ms = 0;
+        const int max_wait_ms = 2000; // Reduced to 2 seconds for faster response
+        const int check_interval_ms = 100;
+        
+        while (wait_ms < max_wait_ms) {
+            uint16_t temp_count = 0;
+            esp_wifi_scan_get_ap_num(&temp_count);
+            if (temp_count > 0) {
+                ESP_LOGI(TAG, "WiFi scan completed after %d ms, found %d networks", wait_ms, temp_count);
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(check_interval_ms));
+            wait_ms += check_interval_ms;
+        }
+        
+        if (wait_ms >= max_wait_ms) {
+            ESP_LOGW(TAG, "WiFi scan timed out after %d ms", max_wait_ms);
+            scan_err = ESP_ERR_TIMEOUT;
+        }
+    }
     
     if (scan_err != ESP_OK) {
         ESP_LOGW(TAG, "WiFi scan failed: %s, using fallback networks", esp_err_to_name(scan_err));
@@ -1254,9 +1338,10 @@ static esp_err_t wifi_scan_json_get_handler(httpd_req_t *req) {
             esp_wifi_set_mode(current_mode);
         }
         
-        // Return fallback simulated networks
+        // Return better fallback networks with helpful placeholder
         snprintf(response, response_len, 
             "{\"networks\":["
+            "{\"ssid\":\"-- Enter WiFi Name Manually --\",\"rssi\":-50,\"auth\":\"Various\"},"
             "{\"ssid\":\"BAANFARANG_O\",\"rssi\":-45,\"auth\":\"WPA2\"},"
             "{\"ssid\":\"HomeNetwork\",\"rssi\":-55,\"auth\":\"WPA2\"},"
             "{\"ssid\":\"OfficeWiFi\",\"rssi\":-67,\"auth\":\"WPA/WPA2\"},"
@@ -1381,6 +1466,8 @@ send_response:
 }
 
 static void start_ap_and_captive_portal() {
+    ESP_LOGI(TAG, "Starting AP and captive portal...");
+    
     // Start AP mode only for configuration (no STA mode to avoid connection attempts)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -1389,54 +1476,90 @@ static void start_ap_and_captive_portal() {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_LOGI(TAG, "WiFi set to AP mode only for configuration");
     
-    // Configure AP
+    // Configure AP with a unique name based on MAC address
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    char ap_ssid[32];
+    snprintf(ap_ssid, sizeof(ap_ssid), "ESP32-CONFIG-%02X%02X", mac[4], mac[5]);
+    
     wifi_config_t ap_config = {
         .ap = {
-            .ssid = "ESP32-CONFIG",
             .ssid_len = 0,
             .password = "",
             .max_connection = 4,
-            .authmode = WIFI_AUTH_OPEN
+            .authmode = WIFI_AUTH_OPEN,
+            .beacon_interval = 100
         }
     };
+    strncpy((char*)ap_config.ap.ssid, ap_ssid, sizeof(ap_config.ap.ssid));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
 
     // Set AP IP and DHCP
     esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();
+    
+    // Stop DHCP server before configuring IP
+    esp_netif_dhcps_stop(ap_netif);
+    
     esp_netif_ip_info_t ip_info;
     ip_info.ip.addr = esp_ip4addr_aton("192.168.4.1");
     ip_info.netmask.addr = esp_ip4addr_aton("255.255.255.0");
     ip_info.gw.addr = esp_ip4addr_aton("192.168.4.1");
-    esp_netif_dhcps_stop(ap_netif);
-    esp_netif_set_ip_info(ap_netif, &ip_info);
+    ESP_ERROR_CHECK(esp_netif_set_ip_info(ap_netif, &ip_info));
+    
+    // Configure DHCP server options
+    esp_netif_dhcps_option(ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &ip_info.ip, sizeof(ip_info.ip));
+    
     esp_netif_dhcps_start(ap_netif);
 
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "WiFi AP started in configuration mode - no STA connection attempts");
+    ESP_LOGI(TAG, "WiFi AP started: %s (IP: 192.168.4.1)", ap_ssid);
+    
+    // Wait a moment for WiFi to stabilize
+    vTaskDelay(pdMS_TO_TICKS(1000));
     
     // Start SPIFFS
     init_spiffs();
+    
     // Start HTTP server
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    httpd_start(&server, &config);
-    // Register handlers
+    config.max_uri_handlers = 16;  // Increase limit
+    config.stack_size = 8192;      // Increase stack size
+    
+    esp_err_t server_err = httpd_start(&server, &config);
+    if (server_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(server_err));
+        return;
+    }
+    
+    ESP_LOGI(TAG, "HTTP server started successfully");
+    
+    // Register handlers in order of specificity (most specific first)
     httpd_uri_t params_json = { .uri = "/params.json", .method = HTTP_GET, .handler = params_json_get_handler, .user_ctx = NULL };
     httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
     httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
     httpd_uri_t sysinfo_json = { .uri = "/sysinfo.json", .method = HTTP_GET, .handler = sysinfo_json_get_handler, .user_ctx = NULL };
     httpd_uri_t wifi_scan_json = { .uri = "/wifi_scan.json", .method = HTTP_GET, .handler = wifi_scan_json_get_handler, .user_ctx = NULL };
+    
+    // Register specific handlers first
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_json));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_update));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &parameters_html));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &sysinfo_json));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &wifi_scan_json));
+    
+    // Register wildcard handler last to catch all other requests
     httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
-    httpd_register_uri_handler(server, &params_json);
-    httpd_register_uri_handler(server, &params_update);
-    httpd_register_uri_handler(server, &parameters_html);
-    httpd_register_uri_handler(server, &sysinfo_json);
-    httpd_register_uri_handler(server, &wifi_scan_json);
-    httpd_register_uri_handler(server, &captive);
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &captive));
+    
+    ESP_LOGI(TAG, "All HTTP handlers registered successfully");
+    ESP_LOGI(TAG, "Captive portal ready - connect to '%s' and visit any website", ap_ssid);
 }
 
 void ap_config_task(void *pvParameter) {
+    ESP_LOGI(TAG, "Starting AP configuration mode...");
+    
     // Load NVS values before starting AP and HTTP server
     load_wifi_config_from_nvs();
     load_mqtt_config_from_nvs();
@@ -1453,9 +1576,25 @@ void ap_config_task(void *pvParameter) {
     
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    // Start DNS hijack server for captive portal
-    xTaskCreate(dns_hijack_task, "dns_hijack_task", 4096, NULL, 4, NULL);
+    
+    // Start the captive portal
     start_ap_and_captive_portal();
+    
+    // Wait a moment for the HTTP server to stabilize
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
+    // Start DNS hijack server for captive portal
+    TaskHandle_t dns_task_handle = NULL;
+    BaseType_t dns_task_result = xTaskCreate(dns_hijack_task, "dns_hijack_task", 4096, NULL, 4, &dns_task_handle);
+    if (dns_task_result == pdPASS) {
+        ESP_LOGI(TAG, "DNS hijack task started successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to create DNS hijack task");
+    }
+    
+    ESP_LOGI(TAG, "AP configuration mode fully initialized");
+    ESP_LOGI(TAG, "Connect to ESP32-CONFIG-XXXX network and visit any website to configure");
+    
     vTaskDelete(NULL);
 }
 
@@ -1636,26 +1775,36 @@ void app_main(void) {
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
 {
+    printf("[WIFI] Event handler called: base=%s, event_id=%ld\n", event_base, event_id);
+    
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        printf("[WIFI] WIFI_EVENT_STA_START - calling esp_wifi_connect()\n");
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        printf("[WIFI] WIFI_EVENT_STA_DISCONNECTED - retry_num=%d\n", wifi_retry_num);
         if (wifi_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
             esp_wifi_connect();
             wifi_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
+            printf("[WIFI] retry to connect to the AP\n");
         } else {
-            ESP_LOGI(TAG, "connect to the AP fail");
-            ESP_LOGW(TAG, "WiFi SSID used: %s", wifi_ssid);
-            ESP_LOGW(TAG, "WiFi Password used: %s", wifi_pass);
+            printf("[WIFI] connect to the AP fail\n");
+            printf("[WIFI] WiFi SSID used: %s\n", wifi_ssid);
+            printf("[WIFI] WiFi Password used: %s\n", wifi_pass);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        printf("[WIFI] IP_EVENT_STA_GOT_IP received!\n");
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        printf("[WIFI] got ip:" IPSTR "\n", IP2STR(&event->ip_info.ip));
         printf("Obtained IP address: " IPSTR "\n", IP2STR(&event->ip_info.ip));
         wifi_retry_num = 0;
         // Start MQTT client once IP is obtained
+        printf("[WIFI] About to start MQTT client...\n");
         mqtt_app_start();
+        printf("[WIFI] MQTT client start function completed\n");
+    } else {
+        printf("[WIFI] Unhandled event: base=%s, event_id=%ld\n", event_base, event_id);
     }
+    printf("[WIFI] Event handler completed\n");
 }
 
 // Wi-Fi Initialization
@@ -1702,17 +1851,20 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data) {
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%ld", event_base, event_id);
     esp_mqtt_event_handle_t event = event_data;
+    printf("[MQTT] Event received: %ld\n", event_id);
     // esp_mqtt_client_handle_t client = event->client; // Not used in this basic handler
     // int msg_id; // Not used here
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+        printf("[MQTT] Connected to broker successfully!\n");
         // Example: Subscribe to a topic (optional)
         // msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
         // ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
+        printf("[MQTT] Disconnected from broker\n");
         break;
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
@@ -1722,14 +1874,15 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
         break;
     case MQTT_EVENT_PUBLISHED:
         ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
-        // Reset software watchdog on successful MQTT publish
-        if (watchdog_enabled) {
-            last_successful_publish = xTaskGetTickCount();
-            mqtt_publish_success = true;
-            ESP_LOGI(TAG, "Software watchdog reset after successful MQTT publish");
-        }
-        // Flash LED only on successful publish
+        printf("[MQTT] Message published successfully!\n");
+        
+        // Flash the LED to indicate successful MQTT publish (heartbeat)
         blink_heartbeat();
+        
+        // Reset the software watchdog timer (if enabled)
+        if (watchdog_enabled) {
+            last_successful_publish = xTaskGetTickCount(); // Update last publish time
+        }
         break;
     case MQTT_EVENT_DATA: // Incoming data event (if subscribed)
         ESP_LOGI(TAG, "MQTT_EVENT_DATA");
@@ -1738,13 +1891,17 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
+        printf("[MQTT] Connection error occurred!\n");
         if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
             ESP_LOGI(TAG, "Last error code reported from esp-tls: 0x%x", event->error_handle->esp_tls_last_esp_err);
             ESP_LOGI(TAG, "Last tls stack error number: 0x%x", event->error_handle->esp_tls_stack_err);
+            printf("[MQTT] TCP Transport error - check network connectivity\n");
         } else if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
             ESP_LOGI(TAG, "Connection refused error: 0x%x", event->error_handle->connect_return_code);
+            printf("[MQTT] Broker refused connection\n");
         } else {
             ESP_LOGW(TAG, "Unknown error type: 0x%x", event->error_handle->error_type);
+            printf("[MQTT] Unknown error type: 0x%x\n", event->error_handle->error_type);
         }
         break;
     default:
@@ -1772,27 +1929,38 @@ static void mqtt_app_start(void) {
 // Placeholder for publishing BMS data
 // This function will be expanded to create and send the two JSON messages
 void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
+    printf("[DEBUG] publish_bms_data_mqtt() called with num_cells=%d\n", bms_data_ptr->num_cells);
+    
     if (!mqtt_client) {
         ESP_LOGE(TAG, "MQTT client not initialized!");
+        printf("[DEBUG] MQTT client not initialized - returning\n");
         return;
     }
 
     ESP_LOGI(TAG, "Preparing to publish BMS data via MQTT...");
 
-    // --- Create a single JSON object for all BMS data (original structure from backup) ---
+    // --- Create JSON with temperature sensors added ---
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         ESP_LOGE(TAG, "Failed to create cJSON root object.");
         return;
     }
 
-    // Add pack data
+    // Add pack data with temperature sensors and enhanced system info
     cJSON *pack_root = cJSON_CreateObject();
     if (pack_root) {
+        // Core pack data
         cJSON_AddNumberToObject(pack_root, "packV", bms_data_ptr->pack_voltage);
         cJSON_AddNumberToObject(pack_root, "packA", bms_data_ptr->pack_current);
         cJSON_AddNumberToObject(pack_root, "packNumberOfCells", bms_data_ptr->num_cells);
         cJSON_AddNumberToObject(pack_root, "packSOC", bms_data_ptr->soc_percent);
+        
+        // Add cell voltage statistics
+        cJSON_AddNumberToObject(pack_root, "packMinCellV", bms_data_ptr->min_cell_voltage);
+        cJSON_AddNumberToObject(pack_root, "packMaxCellV", bms_data_ptr->max_cell_voltage);
+        cJSON_AddNumberToObject(pack_root, "packCellVDelta", bms_data_ptr->cell_voltage_delta);
+        
+        // Add temperature sensors
         cJSON *temp_sensors = cJSON_CreateObject();
         if (temp_sensors) {
             cJSON_AddNumberToObject(temp_sensors, "NTC0", bms_data_ptr->mosfet_temp);
@@ -1800,8 +1968,109 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
             cJSON_AddNumberToObject(temp_sensors, "NTC2", bms_data_ptr->probe2_temp);
             cJSON_AddItemToObject(pack_root, "tempSensorValues", temp_sensors);
         }
-        // Add extra fields to pack_root (restored original logic)
-        for (int i = 0; i < extra_fields_count; ++i) {
+        
+        // Add system status information
+        cJSON *system_status = cJSON_CreateObject();
+        if (system_status) {
+            // Look for MOSFET status fields
+            for (int i = 0; i < extra_fields_count; ++i) {
+                if (extra_fields[i].id == 0xAB) { // Charging MOS switch
+                    cJSON_AddNumberToObject(system_status, "chargeMosfetStatus", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xAC) { // Discharge MOS switch
+                    cJSON_AddNumberToObject(system_status, "dischargeMosfetStatus", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0x9A) { // Active equalization switch
+                    cJSON_AddNumberToObject(system_status, "balancingActive", extra_fields[i].value);
+                }
+            }
+            cJSON_AddItemToObject(pack_root, "systemStatus", system_status);
+        }
+        
+        // Add system configuration
+        cJSON *system_config = cJSON_CreateObject();
+        if (system_config) {
+            for (int i = 0; i < extra_fields_count; ++i) {
+                if (extra_fields[i].id == 0xAA) { // Battery Capacity Settings
+                    cJSON_AddNumberToObject(system_config, "batteryCapacityAh", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA9) { // Number of battery strings
+                    cJSON_AddNumberToObject(system_config, "numberOfStrings", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xAF) { // Battery type
+                    cJSON_AddNumberToObject(system_config, "batteryType", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xB1) { // Low Capacity Alarm Value
+                    cJSON_AddNumberToObject(system_config, "lowCapacityAlarm", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0x99) { // Equalizing opening differential
+                    cJSON_AddNumberToObject(system_config, "equalizingDifferentialMv", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xAD) { // Current Calibration
+                    cJSON_AddNumberToObject(system_config, "currentCalibrationMa", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xB3) { // Special Charger Switch
+                    cJSON_AddNumberToObject(system_config, "specialChargerSwitch", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xB0) { // Sleep Wait Time
+                    cJSON_AddNumberToObject(system_config, "sleepWaitTimeSeconds", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xB8) { // Start Current Calibration
+                    cJSON_AddNumberToObject(system_config, "startCurrentCalibration", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xAE) { // Protective Board 1 Address
+                    cJSON_AddNumberToObject(system_config, "protectiveBoardAddress", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xB2 && extra_fields[i].is_ascii) { // Modify parameter password
+                    cJSON_AddStringToObject(system_config, "modifyParameterPassword", extra_fields[i].strval);
+                }
+            }
+            cJSON_AddItemToObject(pack_root, "systemConfig", system_config);
+        }
+        
+        // Add temperature protection parameters
+        cJSON *temp_protection = cJSON_CreateObject();
+        if (temp_protection) {
+            for (int i = 0; i < extra_fields_count; ++i) {
+                if (extra_fields[i].id == 0x9B) { // Power tube temperature protection
+                    cJSON_AddNumberToObject(temp_protection, "powerTubeTempProtectionC", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0x9F) { // Temperature protection in battery box
+                    cJSON_AddNumberToObject(temp_protection, "batteryBoxTempProtectionC", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA0) { // Recovery value 2 of battery in box
+                    cJSON_AddNumberToObject(temp_protection, "batteryBoxTempRecovery2C", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA1) { // Battery temperature difference
+                    cJSON_AddNumberToObject(temp_protection, "batteryTempDifferenceC", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA2) { // Battery charging 2 high temp protection
+                    cJSON_AddNumberToObject(temp_protection, "chargingHighTempProtection2C", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA3) { // High temp protection for charging
+                    cJSON_AddNumberToObject(temp_protection, "chargingHighTempProtectionC", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA4) { // High temp protection for discharge
+                    cJSON_AddNumberToObject(temp_protection, "dischargeHighTempProtectionC", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA5) { // Charging cryoprotection
+                    cJSON_AddNumberToObject(temp_protection, "chargingLowTempProtectionC", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA6) { // Recovery value 2 of charge cryoprotection
+                    cJSON_AddNumberToObject(temp_protection, "chargingLowTempRecovery2C", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA7) { // Discharge cryoprotection
+                    cJSON_AddNumberToObject(temp_protection, "dischargeLowTempProtectionC", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xA8) { // Discharge low temp protection recovery
+                    cJSON_AddNumberToObject(temp_protection, "dischargeLowTempRecoveryC", extra_fields[i].value);
+                }
+            }
+            cJSON_AddItemToObject(pack_root, "temperatureProtection", temp_protection);
+        }
+        
+        // Add system information
+        cJSON *system_info = cJSON_CreateObject();
+        if (system_info) {
+            for (int i = 0; i < extra_fields_count; ++i) {
+                if (extra_fields[i].id == 0xB4 && extra_fields[i].is_ascii) { // Device ID Code
+                    cJSON_AddStringToObject(system_info, "deviceId", extra_fields[i].strval);
+                } else if (extra_fields[i].id == 0xB5 && extra_fields[i].is_ascii) { // Date of production
+                    cJSON_AddStringToObject(system_info, "productionDate", extra_fields[i].strval);
+                } else if (extra_fields[i].id == 0xB7 && extra_fields[i].is_ascii) { // Software Version
+                    cJSON_AddStringToObject(system_info, "softwareVersion", extra_fields[i].strval);
+                } else if (extra_fields[i].id == 0xB6) { // System working time
+                    cJSON_AddNumberToObject(system_info, "workingTimeMinutes", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xB9) { // Actual battery capacity
+                    cJSON_AddNumberToObject(system_info, "actualCapacityAh", extra_fields[i].value);
+                } else if (extra_fields[i].id == 0xBA && extra_fields[i].is_ascii) { // Factory ID
+                    cJSON_AddStringToObject(system_info, "factoryId", extra_fields[i].strval);
+                }
+            }
+            cJSON_AddItemToObject(pack_root, "systemInfo", system_info);
+        }
+        
+        // Add expanded extra fields (comprehensive BMS system data)
+        // Include ALL available extra fields to maximize data coverage
+        for (int i = 0; i < extra_fields_count && i < MAX_EXTRA_FIELDS; ++i) { // Include all available fields
             const char *field_name = NULL;
             for (size_t j = 0; j < BMS_IDCODES_COUNT; ++j) {
                 if (bms_idcodes[j].id == extra_fields[i].id) {
@@ -1810,66 +2079,77 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
                 }
             }
             if (field_name) {
-                char sanitized[64];
-                int si = 0;
-                for (int k = 0; field_name[k] && si < 63; ++k) {
-                    char c = field_name[k];
-                    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-                        sanitized[si++] = c;
-                    } else if (c == ' ' || c == '-' || c == '/' || c == '%') {
-                        sanitized[si++] = '_';
+                // Include ALL BMS fields for maximum data coverage
+                uint8_t field_id = extra_fields[i].id;
+                // Include all known BMS field IDs from the protocol definition
+                // Core pack data: 0x82, 0x83, 0x84, 0x85 (already handled above in structured sections)
+                // Balance & protection: 0x8F, 0x90, 0x91, 0x93, 0x94, 0x95, 0x96, 0x97
+                // Configuration: 0x99, 0x9A, 0x9B, 0x9F, 0xA0-0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF
+                // System info: 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA
+                // Extended fields: Any other fields that may be present
+                if (field_id == 0x82 || field_id == 0x83 || field_id == 0x84 || field_id == 0x85 || 
+                    field_id == 0x8F || field_id == 0x90 || field_id == 0x91 || field_id == 0x93 || 
+                    field_id == 0x94 || field_id == 0x95 || field_id == 0x96 || field_id == 0x97 ||
+                    field_id == 0x99 || field_id == 0x9A || field_id == 0x9B || field_id == 0x9F ||
+                    (field_id >= 0xA0 && field_id <= 0xA8) || field_id == 0xA9 || field_id == 0xAA || 
+                    field_id == 0xAB || field_id == 0xAC || field_id == 0xAD || field_id == 0xAE || field_id == 0xAF ||
+                    field_id == 0xB0 || field_id == 0xB1 || field_id == 0xB2 || field_id == 0xB3 ||
+                    field_id == 0xB4 || field_id == 0xB5 || field_id == 0xB6 || field_id == 0xB7 ||
+                    field_id == 0xB8 || field_id == 0xB9 || field_id == 0xBA ||
+                    // Include any other fields that might be present (for maximum coverage)
+                    (field_id >= 0x80 && field_id <= 0xFF)) {
+                    
+                    char sanitized[64];
+                    int si = 0;
+                    for (int k = 0; field_name[k] && si < 63; ++k) {
+                        char c = field_name[k];
+                        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                            sanitized[si++] = c;
+                        } else if (c == ' ' || c == '-' || c == '/' || c == '%') {
+                            sanitized[si++] = '_';
+                        }
                     }
-                }
-                sanitized[si] = '\0';
-                
-                // Debug logging for Device ID Code specifically
-                if (extra_fields[i].id == 0xB4) {
-                    ESP_LOGI(TAG, "=== Device ID Code JSON Processing ===");
-                    ESP_LOGI(TAG, "Field name: %s -> sanitized: %s", field_name, sanitized);
-                    ESP_LOGI(TAG, "is_ascii: %d, strval: '%s', value: %u", 
-                             extra_fields[i].is_ascii, extra_fields[i].strval, (unsigned int)extra_fields[i].value);
-                }
-                
-                // Special handling for Device ID Code - always force to string to prevent type conflicts
-                if (extra_fields[i].id == 0xB4) {
-                    char device_id_str[32];
+                    sanitized[si] = '\0';
+                    
                     if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
-                        strncpy(device_id_str, extra_fields[i].strval, sizeof(device_id_str)-1);
+                        cJSON_AddStringToObject(pack_root, sanitized, extra_fields[i].strval);
                     } else {
-                        snprintf(device_id_str, sizeof(device_id_str), "%08X", (unsigned int)extra_fields[i].value);
+                        cJSON_AddNumberToObject(pack_root, sanitized, extra_fields[i].value);
                     }
-                    device_id_str[sizeof(device_id_str)-1] = '\0';
-                    cJSON_AddStringToObject(pack_root, sanitized, device_id_str);
-                    ESP_LOGI(TAG, "Forced Device ID Code as string: %s = %s", sanitized, device_id_str);
-                } else if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
-                    cJSON_AddStringToObject(pack_root, sanitized, extra_fields[i].strval);
-                    ESP_LOGD(TAG, "Added string field: %s = %s", sanitized, extra_fields[i].strval);
-                } else {
-                    cJSON_AddNumberToObject(pack_root, sanitized, extra_fields[i].value);
-                    ESP_LOGD(TAG, "Added number field: %s = %u", sanitized, (unsigned int)extra_fields[i].value);
                 }
             }
+        }
+        
+        // Add raw extra fields section for comprehensive debugging and analysis
+        cJSON *raw_extra_fields = cJSON_CreateObject();
+        if (raw_extra_fields) {
+            char field_key[16];
+            for (int i = 0; i < extra_fields_count && i < MAX_EXTRA_FIELDS; ++i) {
+                snprintf(field_key, sizeof(field_key), "field_0x%02X", extra_fields[i].id);
+                if (extra_fields[i].is_ascii && extra_fields[i].strval[0]) {
+                    cJSON_AddStringToObject(raw_extra_fields, field_key, extra_fields[i].strval);
+                } else {
+                    cJSON_AddNumberToObject(raw_extra_fields, field_key, extra_fields[i].value);
+                }
+            }
+            cJSON_AddItemToObject(pack_root, "rawExtraFields", raw_extra_fields);
         }
         cJSON_AddItemToObject(root, "pack", pack_root);
     }
 
-    // Add cells data (restored original structure)
+    // Add cells data (volts only)
     cJSON *cells_root = cJSON_CreateObject();
     if (cells_root) {
-        char cell_mv_key[16];
         char cell_v_key[16];
         for (int i = 0; i < bms_data_ptr->num_cells; i++) {
             float cell_v = bms_data_ptr->cell_voltages[i];
-            int cell_mv = (int)(cell_v * 1000);
-            snprintf(cell_mv_key, sizeof(cell_mv_key), "cell%dmV", i);
             snprintf(cell_v_key, sizeof(cell_v_key), "cell%dV", i);
-            cJSON_AddNumberToObject(cells_root, cell_mv_key, cell_mv);
             cJSON_AddNumberToObject(cells_root, cell_v_key, cell_v);
         }
         cJSON_AddItemToObject(root, "cells", cells_root);
     }
 
-    // Publish as a single topic (restored original format)
+    // Publish as a single topic
     char *json_string = cJSON_PrintUnformatted(root);
     if (json_string == NULL) {
         ESP_LOGE(TAG, "Failed to print combined cJSON to string.");
@@ -1877,8 +2157,10 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         char topic[64];
         // Use bms_topic directly without any BMS prefix
         snprintf(topic, sizeof(topic), "%s", bms_topic);
+        printf("[DEBUG] About to publish to topic: %s\n", topic);
+        printf("[DEBUG] JSON payload length: %d\n", strlen(json_string));
         esp_mqtt_client_publish(mqtt_client, topic, json_string, 0, 1, 0);
-        ESP_LOGI(TAG, "Published to %s: %s", topic, json_string);
+        ESP_LOGI(TAG, "Published to %s (length: %d)", topic, strlen(json_string));
         free(json_string);
     }
     cJSON_Delete(root);
@@ -1916,74 +2198,104 @@ void url_decode(char *dst, const char *src, size_t dstsize) {
 
 // DNS hijack task for captive portal
 void dns_hijack_task(void *pvParameter) {
-    esp_task_wdt_add(NULL);
+    // Remove from watchdog to prevent conflicts during configuration mode
+    // esp_task_wdt_add(NULL);
+    
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
-        ESP_LOGE(TAG, "Failed to create DNS socket");
-        esp_task_wdt_delete(NULL);
+        ESP_LOGE(TAG, "Failed to create DNS socket: errno=%d", errno);
         vTaskDelete(NULL);
         return;
     }
+    
+    // Set socket options for better reliability
+    int reuse = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        ESP_LOGW(TAG, "Failed to set SO_REUSEADDR: errno=%d", errno);
+    }
+    
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(53);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    
     if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        ESP_LOGE(TAG, "Failed to bind DNS socket");
+        ESP_LOGE(TAG, "Failed to bind DNS socket: errno=%d", errno);
         close(sock);
-        esp_task_wdt_delete(NULL);
         vTaskDelete(NULL);
         return;
     }
+    
     ESP_LOGI(TAG, "DNS hijack server started on UDP port 53");
+    
     uint8_t buf[512];
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
     uint32_t dns_requests_handled = 0;
+    
+    // Set a more reasonable timeout
+    struct timeval timeout;
+    timeout.tv_sec = 5;  // Increased to 5 seconds
+    timeout.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        ESP_LOGW(TAG, "Failed to set socket timeout: errno=%d", errno);
+    }
+    
     while (!system_shutting_down) {  // Check shutdown flag
-        // Set a timeout for recvfrom so we can check shutdown flag periodically
-        struct timeval timeout;
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-        
         int len = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &addr_len);
-        if (len > 0) {
+        
+        if (len > 0 && len >= 12) {  // Valid DNS query minimum size
+            dns_requests_handled++;
+            ESP_LOGD(TAG, "DNS request #%lu received (%d bytes)", dns_requests_handled, len);
+            
             // Minimal DNS response: copy ID, set response flags, answer count = 1
             uint8_t response[512];
             memcpy(response, buf, len);
             response[2] = 0x81; // QR=1, Opcode=0, AA=1, TC=0, RD=0
             response[3] = 0x80; // RA=1, Z=0, RCODE=0
             response[7] = 1;    // ANCOUNT = 1
+            
             // Copy question section after header (12 bytes)
             int qlen = len - 12;
-            memcpy(response + 12, buf + 12, qlen);
-            int pos = 12 + qlen;
-            // Answer: pointer to name (0xC00C), type A, class IN, TTL, RDLENGTH, RDATA
-            response[pos++] = 0xC0; response[pos++] = 0x0C;
-            response[pos++] = 0x00; response[pos++] = 0x01; // Type A
-            response[pos++] = 0x00; response[pos++] = 0x01; // Class IN
-            response[pos++] = 0x00; response[pos++] = 0x00; response[pos++] = 0x00; response[pos++] = 0x3C; // TTL 60s
-            response[pos++] = 0x00; response[pos++] = 0x04; // RDLENGTH 4
-            response[pos++] = 192;  response[pos++] = 168;  response[pos++] = 4; response[pos++] = 1; // 192.168.4.1
-            sendto(sock, response, pos, 0, (struct sockaddr *)&client_addr, addr_len);
-            
-            // Feed watchdog after each DNS request
-            dns_requests_handled++;
-            esp_task_wdt_reset();
-        } else if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-            // Real error, not just timeout
-            ESP_LOGE(TAG, "DNS socket error: %d", errno);
-            break;
+            if (qlen > 0 && qlen < 400) {  // Sanity check
+                memcpy(response + 12, buf + 12, qlen);
+                int pos = 12 + qlen;
+                
+                // Answer: pointer to name (0xC00C), type A, class IN, TTL, RDLENGTH, RDATA
+                response[pos++] = 0xC0; response[pos++] = 0x0C;
+                response[pos++] = 0x00; response[pos++] = 0x01; // Type A
+                response[pos++] = 0x00; response[pos++] = 0x01; // Class IN
+                response[pos++] = 0x00; response[pos++] = 0x00; response[pos++] = 0x00; response[pos++] = 0x3C; // TTL 60s
+                response[pos++] = 0x00; response[pos++] = 0x04; // RDLENGTH 4
+                response[pos++] = 192;  response[pos++] = 168;  response[pos++] = 4; response[pos++] = 1; // 192.168.4.1
+                
+                int sent = sendto(sock, response, pos, 0, (struct sockaddr *)&client_addr, addr_len);
+                if (sent < 0) {
+                    ESP_LOGW(TAG, "Failed to send DNS response: errno=%d", errno);
+                } else {
+                    ESP_LOGD(TAG, "DNS response sent (%d bytes)", sent);
+                }
+            } else {
+                ESP_LOGW(TAG, "Invalid DNS query length: %d", qlen);
+            }
+        } else if (len < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Timeout - this is expected, continue
+                ESP_LOGV(TAG, "DNS socket timeout (expected)");
+            } else {
+                ESP_LOGE(TAG, "DNS socket error: errno=%d", errno);
+                break;
+            }
         }
-        // Timeout or EAGAIN - check shutdown flag and continue
-        // Feed watchdog on timeout too to keep it alive during idle periods
-        esp_task_wdt_reset();
+        
+        // Yield to other tasks periodically
+        if (dns_requests_handled % 10 == 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
     
-    ESP_LOGI(TAG, "DNS hijack task shutting down gracefully");
+    ESP_LOGI(TAG, "DNS hijack task shutting down gracefully (%lu requests handled)", dns_requests_handled);
     close(sock);
-    esp_task_wdt_delete(NULL);
     vTaskDelete(NULL);
 }

@@ -104,25 +104,25 @@
         <h2>ESP32 Configuration</h2>
         <div id="sysinfo" style="margin-bottom:1.5em;">
             <label>Program Version:
-                <span id="sysinfo_version" class="display-field"></span>
+                <span id="sysinfo_version" class="display-field">Loading...</span>
             </label><br>
             <label>Build Date &amp; Time:
-                <span id="sysinfo_build" class="display-field"></span>
+                <span id="sysinfo_build" class="display-field">Loading...</span>
             </label><br>
             <label>Core/SDK Version:
-                <span id="sysinfo_sdk" class="display-field"></span>
+                <span id="sysinfo_sdk" class="display-field">Loading...</span>
             </label><br>
             <label>Restart Reason:
-                <span id="sysinfo_restart" class="display-field"></span>
+                <span id="sysinfo_restart" class="display-field">Loading...</span>
             </label><br>
             <label>ESP Chip Id:
-                <span id="sysinfo_chipid" class="display-field"></span>
+                <span id="sysinfo_chipid" class="display-field">Loading...</span>
             </label><br>
             <label>Flash Chip Id:
-                <span id="sysinfo_flashid" class="display-field"></span>
+                <span id="sysinfo_flashid" class="display-field">Loading...</span>
             </label><br>
             <label>Flash Size:
-                <span id="sysinfo_flashsize" class="display-field"></span>
+                <span id="sysinfo_flashsize" class="display-field">Loading...</span>
             </label>
         </div>
         <form id="paramsForm">
@@ -290,10 +290,10 @@
             // Show a user-friendly message
             const dropdownText = document.getElementById('dropdown-text');
             if (dropdownText) {
-                dropdownText.textContent = 'Scan failed - enter SSID manually';
+                dropdownText.textContent = 'Scan taking longer than expected - try manual entry';
                 dropdownText.style.color = '#ff6b6b';
             }
-        }, 10000); // 10 second timeout
+        }, 8000); // Reduced timeout to 8 seconds
         
         fetch('/wifi_scan.json')
         .then(response => {
@@ -386,6 +386,8 @@
     
     // Wait for DOM to be ready
     document.addEventListener('DOMContentLoaded', function() {
+        console.log('DOM loaded, initializing interface...');
+        
         // Get custom dropdown elements  
         const manualCheckbox = document.getElementById('manual_ssid_cb');
         const manualInput = document.getElementById('ssid');
@@ -394,7 +396,7 @@
         const dropdownOptions = document.getElementById('dropdown-options');
         
         if (customDropdown) {
-            // Force dropdown to be visible
+            // Force dropdown to be visible immediately
             customDropdown.style.display = 'block';
             customDropdown.style.visibility = 'visible';
             customDropdown.style.opacity = '1';
@@ -412,7 +414,7 @@
             });
         }
         
-        // Initialize dropdown and manual input state
+        // Initialize dropdown and manual input state immediately
         updateManualInputVisibility();
         
         // Set up scan button
@@ -422,11 +424,6 @@
                 scanWiFiNetworks();
             });
         }
-        
-        // Auto-scan on page load with delay to let the ESP32 fully initialize
-        setTimeout(() => {
-            scanWiFiNetworks();
-        }, 2000);
         
         // Set up custom dropdown event handlers
         if (dropdownButton && dropdownOptions) {
@@ -444,7 +441,133 @@
                 }
             });
         }
+        
+        console.log('Interface initialized, starting background operations...');
+        
+        // Start background operations with minimal delay
+        setTimeout(() => {
+            loadConfigAndStartScan();
+        }, 100); // Minimal delay just to ensure DOM is fully ready
     });
+
+    // Combined function to load config and start WiFi scan
+    function loadConfigAndStartScan() {
+        console.log('Starting config load and WiFi scan...');
+        
+        // Start WiFi scan immediately (non-blocking)
+        scanWiFiNetworks();
+        
+        // Load system info (non-blocking)
+        loadSystemInfo();
+        
+        // Load configuration data
+        loadConfiguration();
+    }
+    
+    // Separate function for system info loading
+    function loadSystemInfo() {
+        fetch('/sysinfo.json').then(r => {
+            console.log('sysinfo response status:', r.status);
+            if (!r.ok) {
+                throw new Error('HTTP ' + r.status);
+            }
+            return r.json();
+        }).then(info => {
+            console.log('sysinfo data loaded:', info);
+            document.getElementById('sysinfo_version').textContent = info.version || 'N/A';
+            document.getElementById('sysinfo_build').textContent = info.build || 'N/A';
+            document.getElementById('sysinfo_sdk').textContent = info.sdk || 'N/A';
+            document.getElementById('sysinfo_restart').textContent = info.restart_reason || 'N/A';
+            document.getElementById('sysinfo_chipid').textContent = info.chip_id || 'N/A';
+            document.getElementById('sysinfo_flashid').textContent = info.flash_id || 'N/A';
+            document.getElementById('sysinfo_flashsize').textContent = info.flash_size || 'N/A';
+        }).catch(err => {
+            console.error('Failed to fetch sysinfo:', err);
+            document.getElementById('sysinfo_version').textContent = 'Error loading system info';
+        });
+    }
+    
+    // Separate function for configuration loading
+    function loadConfiguration() {
+        fetch('/params.json').then(r => r.json()).then(cfg => {
+            console.log('Config loaded:', cfg);
+            
+            // Immediately populate all fields except SSID
+            document.getElementById('password').value = cfg.password || '';
+            document.getElementById('mqtt_url').value = cfg.mqtt_url || '';
+            document.getElementById('sample_interval').value = cfg.sample_interval || 5000;
+            
+            // Handle BMS Topic
+            const bmsTopicInput = document.getElementById('bms_topic');
+            const bmsTopicValue = cfg.bms_topic || 'JKBMS';
+            bmsTopicInput.value = bmsTopicValue;
+            
+            // Handle SSID configuration
+            handleSavedSSID(cfg.ssid);
+            
+        }).catch(err => {
+            console.error('Error fetching params.json:', err.message);
+        });
+    }
+    
+    // Function to handle saved SSID configuration
+    function handleSavedSSID(savedSSID) {
+        if (!savedSSID) {
+            console.log('No saved SSID found');
+            return;
+        }
+        
+        console.log('Found saved SSID:', savedSSID);
+        const manualCheckbox = document.getElementById('manual_ssid_cb');
+        const manualInput = document.getElementById('ssid');
+        const dropdownText = document.getElementById('dropdown-text');
+        
+        // Set manual entry mode with saved SSID as default
+        manualCheckbox.checked = true;
+        updateManualInputVisibility();
+        manualInput.value = savedSSID;
+        
+        // Update dropdown text to show we have a saved SSID
+        if (dropdownText) {
+            dropdownText.textContent = `Saved: ${savedSSID} (scanning for networks...)`;
+            dropdownText.style.color = '#666';
+        }
+        
+        // Wait for scan to complete, then try to match SSID
+        setTimeout(() => {
+            tryToMatchSSIDInDropdown(savedSSID);
+        }, 3000); // Give scan 3 seconds to complete
+    }
+    
+    // Function to try matching SSID in dropdown results
+    function tryToMatchSSIDInDropdown(ssid) {
+        console.log('Looking for saved SSID in scan results:', ssid);
+        const dropdownOptions = document.getElementById('dropdown-options');
+        const manualCheckbox = document.getElementById('manual_ssid_cb');
+        const dropdownText = document.getElementById('dropdown-text');
+        
+        if (!dropdownOptions) return;
+        
+        const options = dropdownOptions.querySelectorAll('.dropdown-option');
+        for (let option of options) {
+            const optionValue = option.getAttribute('data-value');
+            if (optionValue === ssid) {
+                console.log('Found saved SSID in dropdown, switching to dropdown mode:', ssid);
+                // Switch back to dropdown mode since we found the SSID
+                manualCheckbox.checked = false;
+                updateManualInputVisibility();
+                selectCustomDropdownOption(ssid, option.textContent);
+                return;
+            }
+        }
+        
+        // If not found in dropdown, keep manual entry mode
+        console.log('Saved SSID not found in scan results, keeping manual entry mode:', ssid);
+        if (dropdownText) {
+            dropdownText.textContent = `Using saved: ${ssid}`;
+            dropdownText.style.color = '#666';
+        }
+    }
 
     // Fetch current values via AJAX and populate fields
     fetch('/params.json').then(r => r.json()).then(cfg => {

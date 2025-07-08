@@ -4,12 +4,13 @@
 This firmware enables an ESP32 (esp32doit-devkit-v1) to interface with a JK BMS (Jikong) over RS485, collect battery data, and publish it to an MQTT broker. The system is designed for robust, hands-off operation, with a heartbeat LED that flashes only on successful MQTT publishes and an automatic software watchdog for system recovery.
 
 ## Features
-- Reads data from JK BMS via RS485 (using MAX485 module)
-- Publishes battery data to MQTT topics
+- Reads comprehensive data from JK BMS via RS485 (using MAX485 module)
+- Publishes **complete BMS data** including all operational, safety, and configuration parameters to MQTT topics
 - Heartbeat: onboard LED flashes only on successful MQTT publish (visual confirmation of communication)
 - Captive portal for Wi-Fi and MQTT configuration
 - MQTT topic is configurable via the web interface (see below)
 - **Software watchdog timer** for automatic system recovery from communication failures
+- **Comprehensive BMS data coverage** including temperature protection, calibration, and system information
 
 ## Heartbeat LED
 The onboard LED (GPIO2) provides visual confirmation of system health:
@@ -81,6 +82,147 @@ https://a.aliexpress.com/_oClgBbe
 - Ensure all hardware is wired as described above.
 - The system is designed for continuous, unattended operation.
 - For troubleshooting, monitor the serial log output via USB.
+
+## MQTT Data Structure
+
+The ESP32 publishes comprehensive BMS data in a structured JSON format to the configured MQTT topic. The payload includes over 30 different BMS parameters organized into logical sections.
+
+### Main Data Structure
+```json
+{
+  "pack": {
+    // Core pack data
+    "packV": 13.28,                    // Total pack voltage (V)
+    "packA": 0.0,                      // Pack current (A)
+    "packNumberOfCells": 4,            // Number of cells in series
+    "packSOC": 71,                     // State of charge (%)
+    "packMinCellV": 3.320,             // Minimum cell voltage (V)
+    "packMaxCellV": 3.324,             // Maximum cell voltage (V)
+    "packCellVDelta": 0.004,           // Cell voltage difference (V)
+    
+    // Temperature sensors
+    "tempSensorValues": {
+      "NTC0": 28,                      // MOSFET temperature (°C)
+      "NTC1": 25,                      // Probe 1 temperature (°C)
+      "NTC2": 23                       // Probe 2 temperature (°C)
+    },
+    
+    // System operational status
+    "systemStatus": {
+      "chargeMosfetStatus": 1,         // Charge MOSFET (0=OFF, 1=ON)
+      "dischargeMosfetStatus": 1,      // Discharge MOSFET (0=OFF, 1=ON)
+      "balancingActive": 0             // Cell balancing (0=OFF, 1=ON)
+    },
+    
+    // Battery and system configuration
+    "systemConfig": {
+      "batteryCapacityAh": 320,        // Battery capacity (Ah)
+      "numberOfStrings": 4,            // Number of battery strings
+      "batteryType": 0,                // 0=LiFePO4, 1=Ternary, 2=LiTiO
+      "currentCalibrationMa": 967,     // Current calibration (mA)
+      "protectiveBoardAddress": 1,     // Board address for cascade
+      "sleepWaitTimeSeconds": 10,      // Sleep timeout (seconds)
+      "lowCapacityAlarm": 20,          // Low capacity alarm (%)
+      "specialChargerSwitch": 0,       // Special charger (0=OFF, 1=ON)
+      "startCurrentCalibration": 0,    // Start calibration (0=OFF, 1=ON)
+      "modifyParameterPassword": 0     // Parameter password (if set)
+    },
+    
+    // Temperature protection parameters
+    "temperatureProtection": {
+      "powerTubeTempProtectionC": 2700,           // Power tube limit (°C*100)
+      "batteryBoxTempProtectionC": 65,            // Battery box limit (°C)
+      "batteryBoxTempRecovery2C": 65,             // Battery box recovery (°C)
+      "batteryTempDifferenceC": 60,               // Temperature difference (°C)
+      "chargingHighTempProtection2C": 20,         // Charge high temp 2 (°C)
+      "chargingHighTempProtectionC": 65,          // Charge high temp (°C)
+      "dischargeHighTempProtectionC": 65,         // Discharge high temp (°C)
+      "chargingLowTempProtectionC": 3,            // Charge low temp (°C)
+      "chargingLowTempRecovery2C": 10,            // Charge low temp recovery (°C)
+      "dischargeLowTempProtectionC": -20,         // Discharge low temp (°C)
+      "dischargeLowTempRecoveryC": -10            // Discharge low temp recovery (°C)
+    },
+    
+    // System information
+    "systemInfo": {
+      "deviceId": "0E42910D",                     // Device ID code
+      "productionDate": "2407",                   // Production date (YYMM)
+      "workingTimeMinutes": 280900,               // Total working time (minutes)
+      "softwareVersion": "11.XA_S11.45___",      // Software version
+      "actualCapacityAh": 320,                    // Actual capacity (Ah)
+      "factoryId": "Test"                         // Factory ID
+    },
+    
+    // Individual named fields (for compatibility)
+    "Device_ID_Code": "0E42910D",
+    "Battery_Capacity_Settings": 320,
+    "Number_of_battery_strings_settings": 4,
+    // ... (additional named fields)
+    
+    // Raw field data (for debugging and analysis)
+    "rawExtraFields": {
+      "field_0xB4": "0E42910D",        // Device ID (hex field 0xB4)
+      "field_0xAA": 320,               // Battery capacity (hex field 0xAA)
+      "field_0xA9": 4,                 // Number of strings (hex field 0xA9)
+      // ... (all available BMS fields with hex IDs)
+    }
+  },
+  
+  // Individual cell voltages
+  "cells": {
+    "cell0V": 3.320,                   // Cell 1 voltage (V)
+    "cell1V": 3.322,                   // Cell 2 voltage (V)
+    "cell2V": 3.320,                   // Cell 3 voltage (V)
+    "cell3V": 3.320                    // Cell 4 voltage (V)
+  }
+}
+```
+
+### Data Categories
+
+#### 1. **Core Pack Data**
+- Voltage, current, SOC, cell count
+- Cell voltage statistics (min, max, delta)
+- Essential operational parameters
+
+#### 2. **Temperature Monitoring**
+- MOSFET temperature (power electronics)
+- Temperature probe readings (2 external probes)
+- Temperature protection and recovery thresholds
+
+#### 3. **System Status**
+- MOSFET switch states (charge/discharge)
+- Active balancing status
+- Operational mode indicators
+
+#### 4. **Configuration Parameters**
+- Battery specifications (capacity, type, strings)
+- Calibration values (current, voltage)
+- Protection settings and thresholds
+
+#### 5. **System Information**
+- Device identification and version info
+- Production date and factory data
+- Operational statistics (working time)
+
+#### 6. **Cell Data**
+- Individual cell voltages
+- Cell-level monitoring data
+
+### Data Reliability
+- **Payload size**: ~2,760-2,780 characters
+- **Update frequency**: Every 5-6 seconds (configurable)
+- **Comprehensive coverage**: All 30+ available BMS protocol fields
+- **Multiple formats**: Structured sections + individual named fields + raw hex data
+- **Backward compatibility**: Named fields maintain compatibility with existing consumers
+
+### Integration Examples
+
+**Node-RED**: Use the structured JSON to create comprehensive dashboards
+**InfluxDB**: Store time-series data for all parameters
+**Grafana**: Create detailed monitoring dashboards
+**Home Assistant**: Monitor battery health and status
+**Custom applications**: Use raw field data for specialized analysis
 
 ## Quick Start
 1. Wire up the hardware as described above.
@@ -156,7 +298,7 @@ This project uses a dual-file version management system for consistency between 
 - **Documentation:** Update README and any version references when releasing
 - **Format:** Use semantic versioning (e.g., 1.2.1) without extra whitespace
 
-**Current Version:** 1.2.1
+**Current Version:** 1.3.0
 
 ## Programming Documentation
 

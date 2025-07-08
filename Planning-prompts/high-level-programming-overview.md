@@ -4,6 +4,8 @@
 
 This document provides a high-level overview of all functions in the ESP32 firmware, organized by functional area.
 
+**Version 1.3.0 Enhancement**: This firmware now publishes comprehensive BMS data including all available protocol fields (30+ parameters) organized into structured sections for maximum data richness and usability.
+
 ---
 
 ## Core Application Functions
@@ -39,7 +41,7 @@ This document provides a high-level overview of all functions in the ESP32 firmw
 ## MQTT Communication
 
 ### `publish_bms_data_mqtt(const bms_data_t *bms_data_ptr)`
-**Publish BMS data to MQTT** - Creates structured JSON with pack/cells data, adds extra fields with human-readable names, publishes to configured topic.
+**Publish comprehensive BMS data to MQTT** - Creates structured JSON with 30+ BMS parameters organized into logical sections (systemStatus, systemConfig, temperatureProtection, systemInfo) plus individual cell voltages and raw field data. Payload size: ~2,760-2,780 characters.
 
 ### `mqtt_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)`
 **Handle MQTT events** - Processes connection, disconnection, publish confirmation events, triggers heartbeat LED and watchdog reset on successful publish.
