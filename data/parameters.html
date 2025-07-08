@@ -126,6 +126,9 @@
             </label>
         </div>
         <form id="paramsForm">
+            <label>Pack Name:
+                <input type="text" name="pack_name" id="pack_name" maxlength="63" required>
+            </label>
             <label>WiFi SSID:
                 <!-- Working div-based dropdown for iPad -->
                 <div style="margin-top: 0.3em;">
@@ -162,6 +165,12 @@
             </label>
             <label>BMS Topic:
                 <input type="text" name="bms_topic" id="bms_topic" maxlength="40" required>
+            </label>
+            <label>Watchdog Reset Counter:
+                <input type="number" name="watchdog_reset_counter" id="watchdog_reset_counter" min="0" max="4294967295" required>
+                <div style="font-size: 0.8em; color: #666; margin-top: 0.3em;">
+                    Counter increments each time the watchdog timeout occurs
+                </div>
             </label>
             <button type="submit">Save & Reboot</button>
         </form>
@@ -444,18 +453,15 @@
         
         console.log('Interface initialized, starting background operations...');
         
-        // Start background operations with minimal delay
+        // Start background operations with minimal delay (config load only, WiFi scan on demand)
         setTimeout(() => {
             loadConfigAndStartScan();
         }, 100); // Minimal delay just to ensure DOM is fully ready
     });
 
-    // Combined function to load config and start WiFi scan
+    // Combined function to load config (removed automatic WiFi scan)
     function loadConfigAndStartScan() {
-        console.log('Starting config load and WiFi scan...');
-        
-        // Start WiFi scan immediately (non-blocking)
-        scanWiFiNetworks();
+        console.log('Starting config load...');
         
         // Load system info (non-blocking)
         loadSystemInfo();
@@ -501,6 +507,16 @@
             const bmsTopicInput = document.getElementById('bms_topic');
             const bmsTopicValue = cfg.bms_topic || 'JKBMS';
             bmsTopicInput.value = bmsTopicValue;
+            
+            // Handle Pack Name
+            const packNameInput = document.getElementById('pack_name');
+            const packNameValue = cfg.pack_name || 'Set in Parameters';
+            packNameInput.value = packNameValue;
+            
+            // Handle Watchdog Reset Counter
+            const watchdogCounterInput = document.getElementById('watchdog_reset_counter');
+            const watchdogCounterValue = cfg.watchdog_reset_counter || 0;
+            watchdogCounterInput.value = watchdogCounterValue;
             
             // Handle SSID configuration
             handleSavedSSID(cfg.ssid);

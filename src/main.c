@@ -73,16 +73,21 @@ static bool debug_logging = true;
 #define MQTT_NVS_KEY_URL "broker_url"
 #define NVS_KEY_SAMPLE_INTERVAL "sample_interval"
 #define NVS_KEY_BMS_TOPIC "BMS_Topic"
+#define NVS_KEY_WATCHDOG_COUNTER "watchdog_counter"
+#define NVS_KEY_PACK_NAME "pack_name"
 #define DEFAULT_WIFI_SSID "yourSSID"
 #define DEFAULT_WIFI_PASS "yourpassword"
 #define DEFAULT_MQTT_BROKER_URL "mqtt://192.168.1.100"
 #define DEFAULT_SAMPLE_INTERVAL 5000L
+#define DEFAULT_PACK_NAME "Set in Parameters"
 
 static char wifi_ssid[33] = DEFAULT_WIFI_SSID;
 static char wifi_pass[65] = DEFAULT_WIFI_PASS;
 static char mqtt_broker_url[128] = DEFAULT_MQTT_BROKER_URL;
 char bms_topic[41] = "BMS/JKBMS";  // Remove static to make it globally accessible
 static long sample_interval_ms = DEFAULT_SAMPLE_INTERVAL;
+static uint32_t watchdog_reset_counter = 0;  // Watchdog timer reset counter
+static char pack_name[64] = DEFAULT_PACK_NAME;  // Pack name field
 
 // Define the UART peripheral number to be used (UART2 in this case)
 #define UART_NUM UART_NUM_2
@@ -198,6 +203,12 @@ static bms_extra_field_t extra_fields[MAX_EXTRA_FIELDS];
 static int extra_fields_count = 0;
 
 // Forward declarations for functions defined later in this file
+
+// Forward declarations for NVS functions
+static void load_watchdog_counter_from_nvs(void);
+static void save_watchdog_counter_to_nvs(void);
+static void load_pack_name_from_nvs(void);
+static void save_pack_name_to_nvs(const char* name);
 
 // Forward declaration for DNS hijack task
 void dns_hijack_task(void *pvParameter);
@@ -946,6 +957,107 @@ void save_bms_topic_to_nvs(const char *topic) {
     }
 }
 
+void load_watchdog_counter_from_nvs() {
+    ESP_LOGI(TAG, "=== LOADING WATCHDOG COUNTER FROM NVS ===");
+    ESP_LOGI(TAG, "Initial watchdog_reset_counter value: %lu", watchdog_reset_counter);
+    
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    ESP_LOGI(TAG, "NVS open result: %s", esp_err_to_name(err));
+    
+    if (err == ESP_OK) {
+        uint32_t val = 0;
+        esp_err_t get_err = nvs_get_u32(nvs_handle, NVS_KEY_WATCHDOG_COUNTER, &val);
+        ESP_LOGI(TAG, "NVS get_u32 result: %s", esp_err_to_name(get_err));
+        
+        if (get_err == ESP_OK) {
+            watchdog_reset_counter = val;
+            ESP_LOGI(TAG, "Successfully loaded watchdog counter from NVS: %lu", watchdog_reset_counter);
+        } else {
+            ESP_LOGW(TAG, "Watchdog counter not found in NVS (error: %s), using default: 0", esp_err_to_name(get_err));
+            watchdog_reset_counter = 0;
+            esp_err_t set_err = nvs_set_u32(nvs_handle, NVS_KEY_WATCHDOG_COUNTER, watchdog_reset_counter);
+            ESP_LOGI(TAG, "Default watchdog counter save result: %s", esp_err_to_name(set_err));
+            nvs_commit(nvs_handle);
+        }
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for watchdog counter: %s", esp_err_to_name(err));
+        watchdog_reset_counter = 0;
+    }
+    ESP_LOGI(TAG, "=== FINAL WATCHDOG COUNTER: %lu ===", watchdog_reset_counter);
+}
+
+void save_watchdog_counter_to_nvs() {
+    ESP_LOGI(TAG, "=== SAVING WATCHDOG COUNTER TO NVS ===");
+    ESP_LOGI(TAG, "Saving watchdog_reset_counter: %lu", watchdog_reset_counter);
+    
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        esp_err_t set_err = nvs_set_u32(nvs_handle, NVS_KEY_WATCHDOG_COUNTER, watchdog_reset_counter);
+        ESP_LOGI(TAG, "NVS set_u32 result: %s", esp_err_to_name(set_err));
+        if (set_err == ESP_OK) {
+            nvs_commit(nvs_handle);
+        }
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for saving watchdog counter: %s", esp_err_to_name(err));
+    }
+}
+
+void load_pack_name_from_nvs() {
+    ESP_LOGI(TAG, "=== LOADING PACK NAME FROM NVS ===");
+    ESP_LOGI(TAG, "Initial pack_name value: '%s'", pack_name);
+    
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    ESP_LOGI(TAG, "NVS open result: %s", esp_err_to_name(err));
+    
+    if (err == ESP_OK) {
+        size_t name_len = sizeof(pack_name);
+        ESP_LOGI(TAG, "Attempting to read NVS key '%s', buffer size: %d", NVS_KEY_PACK_NAME, name_len);
+        
+        esp_err_t get_err = nvs_get_str(nvs_handle, NVS_KEY_PACK_NAME, pack_name, &name_len);
+        ESP_LOGI(TAG, "NVS get_str result: %s", esp_err_to_name(get_err));
+        
+        if (get_err != ESP_OK) {
+            ESP_LOGW(TAG, "Pack name not found in NVS (error: %s), using default: %s", esp_err_to_name(get_err), DEFAULT_PACK_NAME);
+            strncpy(pack_name, DEFAULT_PACK_NAME, sizeof(pack_name)-1);
+            pack_name[sizeof(pack_name)-1] = '\0';
+            esp_err_t set_err = nvs_set_str(nvs_handle, NVS_KEY_PACK_NAME, pack_name);
+            ESP_LOGI(TAG, "Default pack name save result: %s", esp_err_to_name(set_err));
+            nvs_commit(nvs_handle);
+        } else {
+            ESP_LOGI(TAG, "Successfully loaded pack name from NVS: '%s' (length: %d)", pack_name, name_len);
+        }
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for pack name: %s", esp_err_to_name(err));
+        strncpy(pack_name, DEFAULT_PACK_NAME, sizeof(pack_name)-1);
+        pack_name[sizeof(pack_name)-1] = '\0';
+    }
+    ESP_LOGI(TAG, "=== FINAL PACK NAME: '%s' ===", pack_name);
+}
+
+void save_pack_name_to_nvs(const char *name) {
+    ESP_LOGI(TAG, "=== SAVING PACK NAME TO NVS ===");
+    ESP_LOGI(TAG, "Saving pack_name: '%s'", name);
+    
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        esp_err_t set_err = nvs_set_str(nvs_handle, NVS_KEY_PACK_NAME, name);
+        ESP_LOGI(TAG, "NVS set_str result: %s", esp_err_to_name(set_err));
+        if (set_err == ESP_OK) {
+            nvs_commit(nvs_handle);
+        }
+        nvs_close(nvs_handle);
+    } else {
+        ESP_LOGE(TAG, "Failed to open NVS for saving pack name: %s", esp_err_to_name(err));
+    }
+}
+
 // SPIFFS init
 void init_spiffs() {
     esp_vfs_spiffs_conf_t conf = {
@@ -964,10 +1076,12 @@ esp_err_t params_json_get_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "Current wifi_ssid: '%s'", wifi_ssid);
     ESP_LOGI(TAG, "Current mqtt_broker_url: '%s'", mqtt_broker_url);
     ESP_LOGI(TAG, "Current sample_interval_ms: %ld", sample_interval_ms);
+    ESP_LOGI(TAG, "Current watchdog_reset_counter: %lu", watchdog_reset_counter);
+    ESP_LOGI(TAG, "Current pack_name: '%s'", pack_name);
     
     char buf[512];
-    snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"password\":\"%s\",\"mqtt_url\":\"%s\",\"sample_interval\":%ld,\"bms_topic\":\"%s\"}", 
-             wifi_ssid, wifi_pass, mqtt_broker_url, sample_interval_ms, bms_topic);
+    snprintf(buf, sizeof(buf), "{\"ssid\":\"%s\",\"password\":\"%s\",\"mqtt_url\":\"%s\",\"sample_interval\":%ld,\"bms_topic\":\"%s\",\"watchdog_reset_counter\":%lu,\"pack_name\":\"%s\"}", 
+             wifi_ssid, wifi_pass, mqtt_broker_url, sample_interval_ms, bms_topic, watchdog_reset_counter, pack_name);
     ESP_LOGI(TAG, "Sending params.json response: %s", buf);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
@@ -1064,6 +1178,52 @@ esp_err_t params_update_post_handler(httpd_req_t *req) {
     esp_err_t nvs_err = nvs_set_str(nvs_handle, NVS_KEY_BMS_TOPIC, bms_topic);
     ESP_LOGI(TAG, "Saved BMS topic '%s' to NVS with key '%s': %s", bms_topic, NVS_KEY_BMS_TOPIC, esp_err_to_name(nvs_err));
     ESP_LOGI(TAG, "=== BMS TOPIC PROCESSING COMPLETE ===");
+    
+    // Handle Pack Name
+    ESP_LOGI(TAG, "=== PROCESSING PACK NAME ===");
+    ESP_LOGI(TAG, "Current pack_name before update: '%s'", pack_name);
+    
+    char pack_name_in[64] = "";
+    char pack_name_dec[64];
+    char *pack_name_ptr = strstr(buf, "pack_name=");
+    if (pack_name_ptr) {
+        sscanf(pack_name_ptr + 10, "%63[^&]", pack_name_in);
+        ESP_LOGI(TAG, "Raw pack name from form: '%s'", pack_name_in);
+        
+        url_decode(pack_name_dec, pack_name_in, sizeof(pack_name_dec));
+        ESP_LOGI(TAG, "URL decoded pack name: '%s'", pack_name_dec);
+        
+        strncpy(pack_name, pack_name_dec, sizeof(pack_name)-1);
+        pack_name[sizeof(pack_name)-1] = '\0';
+        ESP_LOGI(TAG, "Pack name updated to: '%s'", pack_name);
+    } else {
+        ESP_LOGW(TAG, "No pack_name found in request data: %s", buf);
+    }
+    
+    esp_err_t pack_name_nvs_err = nvs_set_str(nvs_handle, NVS_KEY_PACK_NAME, pack_name);
+    ESP_LOGI(TAG, "Saved pack name '%s' to NVS with key '%s': %s", pack_name, NVS_KEY_PACK_NAME, esp_err_to_name(pack_name_nvs_err));
+    ESP_LOGI(TAG, "=== PACK NAME PROCESSING COMPLETE ===");
+    
+    // Handle Watchdog Reset Counter
+    ESP_LOGI(TAG, "=== PROCESSING WATCHDOG RESET COUNTER ===");
+    ESP_LOGI(TAG, "Current watchdog_reset_counter before update: %lu", watchdog_reset_counter);
+    
+    char *watchdog_counter_ptr = strstr(buf, "watchdog_reset_counter=");
+    if (watchdog_counter_ptr) {
+        uint32_t counter_value = 0;
+        sscanf(watchdog_counter_ptr + 23, "%lu", &counter_value);
+        ESP_LOGI(TAG, "Watchdog counter from form: %lu", counter_value);
+        
+        watchdog_reset_counter = counter_value;
+        ESP_LOGI(TAG, "Watchdog reset counter updated to: %lu", watchdog_reset_counter);
+    } else {
+        ESP_LOGW(TAG, "No watchdog_reset_counter found in request data: %s", buf);
+    }
+    
+    esp_err_t watchdog_nvs_err = nvs_set_u32(nvs_handle, NVS_KEY_WATCHDOG_COUNTER, watchdog_reset_counter);
+    ESP_LOGI(TAG, "Saved watchdog counter %lu to NVS with key '%s': %s", watchdog_reset_counter, NVS_KEY_WATCHDOG_COUNTER, esp_err_to_name(watchdog_nvs_err));
+    ESP_LOGI(TAG, "=== WATCHDOG RESET COUNTER PROCESSING COMPLETE ===");
+    
     nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
     
@@ -1310,7 +1470,7 @@ static esp_err_t wifi_scan_json_get_handler(httpd_req_t *req) {
     if (scan_err == ESP_OK) {
         // Wait for scan to complete with timeout
         int wait_ms = 0;
-        const int max_wait_ms = 2000; // Reduced to 2 seconds for faster response
+        const int max_wait_ms = 2000; // Reduced to 2 seconds
         const int check_interval_ms = 100;
         
         while (wait_ms < max_wait_ms) {
@@ -1565,6 +1725,8 @@ void ap_config_task(void *pvParameter) {
     load_mqtt_config_from_nvs();
     load_sample_interval_from_nvs();
     load_bms_topic_from_nvs();
+    load_watchdog_counter_from_nvs();
+    load_pack_name_from_nvs();
     
     ESP_LOGI(TAG, "=== CONFIG LOADED FROM NVS (AP MODE) ===");
     ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
@@ -1572,6 +1734,8 @@ void ap_config_task(void *pvParameter) {
     ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
     ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
     ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
+    ESP_LOGI(TAG, "Watchdog reset counter: %lu", watchdog_reset_counter);
+    ESP_LOGI(TAG, "Pack name: '%s'", pack_name);
     ESP_LOGI(TAG, "=== STARTING AP CONFIG MODE ===");
     
     ESP_ERROR_CHECK(esp_netif_init());
@@ -1677,6 +1841,8 @@ void app_main(void) {
     load_mqtt_config_from_nvs();
     load_sample_interval_from_nvs();
     load_bms_topic_from_nvs();
+    load_watchdog_counter_from_nvs();
+    load_pack_name_from_nvs();
     
     ESP_LOGI(TAG, "=== CONFIG LOADED FROM NVS ===");
     ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
@@ -1684,6 +1850,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "MQTT Broker URL: %s", mqtt_broker_url);
     ESP_LOGI(TAG, "BMS Topic: %s", bms_topic);
     ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
+    ESP_LOGI(TAG, "Watchdog reset counter: %lu", watchdog_reset_counter);
+    ESP_LOGI(TAG, "Pack name: %s", pack_name);
     ESP_LOGI(TAG, "=== STARTING WIFI INIT ===");
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta(); // Initialize Wi-Fi
@@ -1715,6 +1883,12 @@ void app_main(void) {
             TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
             if (elapsed_ms >= watchdog_timeout_ms) {
                 ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
+                
+                // Increment watchdog reset counter and save to NVS
+                watchdog_reset_counter++;
+                ESP_LOGE(TAG, "Incrementing watchdog reset counter to: %lu", watchdog_reset_counter);
+                save_watchdog_counter_to_nvs();
+                
                 ESP_LOGE(TAG, "Forcing system restart...");
                 vTaskDelay(pdMS_TO_TICKS(100));
                 esp_restart();
@@ -1945,6 +2119,9 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         ESP_LOGE(TAG, "Failed to create cJSON root object.");
         return;
     }
+
+    // Add pack name at the top level first
+    cJSON_AddStringToObject(root, "packName", pack_name);
 
     // Add pack data with temperature sensors and enhanced system info
     cJSON *pack_root = cJSON_CreateObject();
