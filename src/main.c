@@ -73,7 +73,7 @@ static bool debug_logging = true;
 #define MQTT_NVS_KEY_URL "broker_url"
 #define NVS_KEY_SAMPLE_INTERVAL "sample_interval"
 #define NVS_KEY_BMS_TOPIC "BMS_Topic"
-#define NVS_KEY_WATCHDOG_COUNTER "watchdog_counter"
+#define NVS_KEY_WATCHDOG_COUNTER "watchdog_cnt"
 #define NVS_KEY_PACK_NAME "pack_name"
 #define DEFAULT_WIFI_SSID "yourSSID"
 #define DEFAULT_WIFI_PASS "yourpassword"
@@ -208,7 +208,6 @@ static int extra_fields_count = 0;
 static void load_watchdog_counter_from_nvs(void);
 static void save_watchdog_counter_to_nvs(void);
 static void load_pack_name_from_nvs(void);
-static void save_pack_name_to_nvs(const char* name);
 
 // Forward declaration for DNS hijack task
 void dns_hijack_task(void *pvParameter);
@@ -221,7 +220,6 @@ static esp_err_t params_update_post_handler(httpd_req_t *req);
 static esp_err_t parameters_html_handler(httpd_req_t *req);
 static esp_err_t captive_redirect_handler(httpd_req_t *req);
 static esp_err_t sysinfo_json_get_handler(httpd_req_t *req);
-static esp_err_t wifi_scan_json_get_handler(httpd_req_t *req);
 
 // Initializes the UART communication peripheral.
 void init_uart();
@@ -383,7 +381,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // The JK BMS uses a simple sum CRC.
     // The CRC is calculated over the bytes from the Start Frame (0x4E) up to, but not including,
     // the 4-byte checksum field itself.
-    // The actual 16-bit CRC sum is stored in the last 2 bytes of this 4-byte field.
+    // The actual 16-bit CRC sum is stored in the last 2 bytes of this 4-byte field (i.e., at offset process_len - 2).
     // (The first 2 bytes of the checksum field are often 0x0000).
 
     // Minimum length for CRC calculation: Header (11 bytes) + Trailer before CRC (RecNum(4) + EndID(1) = 5 bytes) + CRC (4 bytes) = 20 bytes.
@@ -1072,6 +1070,16 @@ void init_spiffs() {
 // HTTP handler for /params.json
 esp_err_t params_json_get_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "=== PARAMS.JSON REQUEST ===");
+    
+    // Debug: Show counter before reloading from NVS
+    ESP_LOGI(TAG, "*** DEBUG: watchdog_reset_counter before reload: %lu ***", watchdog_reset_counter);
+    
+    // Reload watchdog counter from NVS to ensure latest value is displayed
+    load_watchdog_counter_from_nvs();
+    
+    // Debug: Show counter after reloading from NVS
+    ESP_LOGI(TAG, "*** DEBUG: watchdog_reset_counter after reload: %lu ***", watchdog_reset_counter);
+    
     ESP_LOGI(TAG, "Current bms_topic variable: '%s'", bms_topic);
     ESP_LOGI(TAG, "Current wifi_ssid: '%s'", wifi_ssid);
     ESP_LOGI(TAG, "Current mqtt_broker_url: '%s'", mqtt_broker_url);
@@ -1280,9 +1288,6 @@ esp_err_t captive_redirect_handler(httpd_req_t *req) {
     if (strcmp(req->uri, "/sysinfo.json") == 0) {
         return sysinfo_json_get_handler(req);
     }
-    if (strcmp(req->uri, "/wifi_scan.json") == 0) {
-        return wifi_scan_json_get_handler(req);
-    }
     if (strcmp(req->uri, "/update") == 0) {
         return params_update_post_handler(req);
     }
@@ -1413,217 +1418,7 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Handler for /wifi_scan.json - Returns available WiFi networks with signal strengths
-static esp_err_t wifi_scan_json_get_handler(httpd_req_t *req) {
-    ESP_LOGI(TAG, "WiFi scan requested in AP configuration mode");
-    
-    char *response = NULL;
-    size_t response_len = 4096; // Increased buffer size for more networks
-    
-    // Allocate response buffer on heap to avoid stack issues
-    response = malloc(response_len);
-    if (response == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate response buffer");
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_send(req, "{\"error\":\"Memory allocation failed\",\"networks\":[]}", HTTPD_RESP_USE_STRLEN);
-        return ESP_OK;
-    }
-    
-    // Check if WiFi is initialized
-    wifi_mode_t current_mode;
-    esp_err_t mode_err = esp_wifi_get_mode(&current_mode);
-    if (mode_err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get WiFi mode: %s", esp_err_to_name(mode_err));
-        snprintf(response, response_len, "{\"error\":\"WiFi not initialized\",\"networks\":[]}");
-        goto send_response;
-    }
-    
-    ESP_LOGI(TAG, "Current WiFi mode: %d, attempting real WiFi scan", current_mode);
-    
-    // Temporarily switch to APSTA mode if we're in AP-only mode to enable scanning
-    bool mode_switched = false;
-    if (current_mode == WIFI_MODE_AP) {
-        ESP_LOGI(TAG, "Switching to APSTA mode for WiFi scanning");
-        esp_err_t switch_err = esp_wifi_set_mode(WIFI_MODE_APSTA);
-        if (switch_err == ESP_OK) {
-            mode_switched = true;
-            vTaskDelay(pdMS_TO_TICKS(200)); // Reduced delay for faster response
-        } else {
-            ESP_LOGW(TAG, "Failed to switch to APSTA mode: %s, providing fallback networks", esp_err_to_name(switch_err));
-            // Provide useful fallback networks immediately if mode switch fails
-            snprintf(response, response_len, 
-                "{\"networks\":["
-                "{\"ssid\":\"-- Enter WiFi Name Manually --\",\"rssi\":-50,\"auth\":\"Various\"},"
-                "{\"ssid\":\"BAANFARANG_O\",\"rssi\":-45,\"auth\":\"WPA2\"},"
-                "{\"ssid\":\"HomeNetwork\",\"rssi\":-55,\"auth\":\"WPA2\"},"
-                "{\"ssid\":\"OfficeWiFi\",\"rssi\":-67,\"auth\":\"WPA2\"},"
-                "{\"ssid\":\"GuestNetwork\",\"rssi\":-72,\"auth\":\"Open\"}"
-                "]}");
-            goto send_response;
-        }
-    }
-    
-    // Perform WiFi scan
-    wifi_scan_config_t scan_config = {0};
-    esp_err_t scan_err = esp_wifi_scan_start(&scan_config, false); // Non-blocking scan
-    
-    if (scan_err == ESP_OK) {
-        // Wait for scan to complete with timeout
-        int wait_ms = 0;
-        const int max_wait_ms = 2000; // Reduced to 2 seconds
-        const int check_interval_ms = 100;
-        
-        while (wait_ms < max_wait_ms) {
-            uint16_t temp_count = 0;
-            esp_wifi_scan_get_ap_num(&temp_count);
-            if (temp_count > 0) {
-                ESP_LOGI(TAG, "WiFi scan completed after %d ms, found %d networks", wait_ms, temp_count);
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(check_interval_ms));
-            wait_ms += check_interval_ms;
-        }
-        
-        if (wait_ms >= max_wait_ms) {
-            ESP_LOGW(TAG, "WiFi scan timed out after %d ms", max_wait_ms);
-            scan_err = ESP_ERR_TIMEOUT;
-        }
-    }
-    
-    if (scan_err != ESP_OK) {
-        ESP_LOGW(TAG, "WiFi scan failed: %s, using fallback networks", esp_err_to_name(scan_err));
-        
-        // Restore original mode if we switched it
-        if (mode_switched) {
-            esp_wifi_set_mode(current_mode);
-        }
-        
-        // Return better fallback networks with helpful placeholder
-        snprintf(response, response_len, 
-            "{\"networks\":["
-            "{\"ssid\":\"-- Enter WiFi Name Manually --\",\"rssi\":-50,\"auth\":\"Various\"},"
-            "{\"ssid\":\"BAANFARANG_O\",\"rssi\":-45,\"auth\":\"WPA2\"},"
-            "{\"ssid\":\"HomeNetwork\",\"rssi\":-55,\"auth\":\"WPA2\"},"
-            "{\"ssid\":\"OfficeWiFi\",\"rssi\":-67,\"auth\":\"WPA/WPA2\"},"
-            "{\"ssid\":\"GuestNetwork\",\"rssi\":-72,\"auth\":\"Open\"}"
-            "]}");
-        goto send_response;
-    }
-    
-    // Get scan results
-    uint16_t ap_count = 0;
-    esp_wifi_scan_get_ap_num(&ap_count);
-    ESP_LOGI(TAG, "Found %d WiFi networks", ap_count);
-    
-    if (ap_count == 0) {
-        ESP_LOGW(TAG, "No WiFi networks found, using fallback");
-        
-        // Restore original mode if we switched it
-        if (mode_switched) {
-            esp_wifi_set_mode(current_mode);
-        }
-        
-        snprintf(response, response_len, "{\"networks\":[]}");
-        goto send_response;
-    }
-    
-    // Limit to reasonable number to avoid buffer overflow
-    if (ap_count > 20) {
-        ap_count = 20;
-    }
-    
-    wifi_ap_record_t *ap_records = malloc(sizeof(wifi_ap_record_t) * ap_count);
-    if (ap_records == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for AP records");
-        
-        // Restore original mode if we switched it
-        if (mode_switched) {
-            esp_wifi_set_mode(current_mode);
-        }
-        
-        snprintf(response, response_len, "{\"error\":\"Memory allocation failed\",\"networks\":[]}");
-        goto send_response;
-    }
-    
-    esp_err_t get_err = esp_wifi_scan_get_ap_records(&ap_count, ap_records);
-    if (get_err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get scan results: %s", esp_err_to_name(get_err));
-        free(ap_records);
-        
-        // Restore original mode if we switched it
-        if (mode_switched) {
-            esp_wifi_set_mode(current_mode);
-        }
-        
-        snprintf(response, response_len, "{\"error\":\"Failed to get scan results\",\"networks\":[]}");
-        goto send_response;
-    }
-    
-    // Build JSON response
-    int offset = 0;
-    offset += snprintf(response + offset, response_len - offset, "{\"networks\":[");
-    
-    for (int i = 0; i < ap_count && offset < (response_len - 200); i++) {
-        if (i > 0) {
-            offset += snprintf(response + offset, response_len - offset, ",");
-        }
-        
-        // Determine auth type string
-        const char *auth_str = "Unknown";
-        switch (ap_records[i].authmode) {
-            case WIFI_AUTH_OPEN: auth_str = "Open"; break;
-            case WIFI_AUTH_WEP: auth_str = "WEP"; break;
-            case WIFI_AUTH_WPA_PSK: auth_str = "WPA"; break;
-            case WIFI_AUTH_WPA2_PSK: auth_str = "WPA2"; break;
-            case WIFI_AUTH_WPA_WPA2_PSK: auth_str = "WPA/WPA2"; break;
-            case WIFI_AUTH_WPA2_ENTERPRISE: auth_str = "WPA2-Enterprise"; break;
-            case WIFI_AUTH_WPA3_PSK: auth_str = "WPA3"; break;
-            default: auth_str = "WPA2"; break;
-        }
-        
-        // Sanitize SSID (replace quotes and control characters)
-        char safe_ssid[33];
-        int j, k = 0;
-        for (j = 0; j < 32 && ap_records[i].ssid[j] != '\0' && k < 32; j++) {
-            char c = ap_records[i].ssid[j];
-            if (c == '"' || c == '\\') {
-                if (k < 31) {
-                    safe_ssid[k++] = '\\';
-                    safe_ssid[k++] = c;
-                }
-            } else if (c >= 32 && c < 127) { // Printable ASCII
-                safe_ssid[k++] = c;
-            }
-        }
-        safe_ssid[k] = '\0';
-        
-        offset += snprintf(response + offset, response_len - offset, 
-            "{\"ssid\":\"%s\",\"rssi\":%d,\"auth\":\"%s\"}", 
-            safe_ssid, ap_records[i].rssi, auth_str);
-    }
-    
-    offset += snprintf(response + offset, response_len - offset, "]}");
-    
-    free(ap_records);
-    
-    // Restore original mode if we switched it
-    if (mode_switched) {
-        esp_err_t restore_err = esp_wifi_set_mode(current_mode);
-        if (restore_err != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to restore original WiFi mode: %s", esp_err_to_name(restore_err));
-        } else {
-            ESP_LOGI(TAG, "Restored original WiFi mode after scan");
-        }
-    }
-    
-    ESP_LOGI(TAG, "WiFi scan completed successfully, found %d networks", ap_count);
 
-send_response:
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
-    free(response);
-    return ESP_OK;
-}
 
 static void start_ap_and_captive_portal() {
     ESP_LOGI(TAG, "Starting AP and captive portal...");
@@ -1700,14 +1495,12 @@ static void start_ap_and_captive_portal() {
     httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
     httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
     httpd_uri_t sysinfo_json = { .uri = "/sysinfo.json", .method = HTTP_GET, .handler = sysinfo_json_get_handler, .user_ctx = NULL };
-    httpd_uri_t wifi_scan_json = { .uri = "/wifi_scan.json", .method = HTTP_GET, .handler = wifi_scan_json_get_handler, .user_ctx = NULL };
     
     // Register specific handlers first
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_json));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_update));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &parameters_html));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &sysinfo_json));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &wifi_scan_json));
     
     // Register wildcard handler last to catch all other requests
     httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
@@ -1720,6 +1513,9 @@ static void start_ap_and_captive_portal() {
 void ap_config_task(void *pvParameter) {
     ESP_LOGI(TAG, "Starting AP configuration mode...");
     
+    // Debug: Show watchdog counter before loading from NVS
+    ESP_LOGI(TAG, "*** DEBUG: watchdog_reset_counter before NVS load (AP mode): %lu ***", watchdog_reset_counter);
+    
     // Load NVS values before starting AP and HTTP server
     load_wifi_config_from_nvs();
     load_mqtt_config_from_nvs();
@@ -1727,6 +1523,9 @@ void ap_config_task(void *pvParameter) {
     load_bms_topic_from_nvs();
     load_watchdog_counter_from_nvs();
     load_pack_name_from_nvs();
+    
+    // Debug: Show watchdog counter after loading from NVS
+    ESP_LOGI(TAG, "*** DEBUG: watchdog_reset_counter after NVS load (AP mode): %lu ***", watchdog_reset_counter);
     
     ESP_LOGI(TAG, "=== CONFIG LOADED FROM NVS (AP MODE) ===");
     ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
@@ -1779,6 +1578,7 @@ void app_main(void) {
     // REDUCE LOGGING OUTPUT - Uncomment one of these lines:
     // ============================================================
     esp_log_level_set("*", ESP_LOG_WARN);   // Show only warnings and errors
+    // esp_log_level_set("*", ESP_LOG_INFO);   // Show info, warnings and errors (for debugging)
     // esp_log_level_set("*", ESP_LOG_ERROR);  // Show only errors
     // esp_log_level_set("*", ESP_LOG_NONE);   // Turn off all logging
     
@@ -1789,6 +1589,9 @@ void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Debug: Show initial watchdog counter value at app start
+    ESP_LOGI(TAG, "*** DEBUG: Initial watchdog_reset_counter at app start: %lu ***", watchdog_reset_counter);
 
     // Configure Task Watchdog Timer
     ESP_LOGI(TAG, "Configuring Task Watchdog Timer...");
@@ -1837,12 +1640,18 @@ void app_main(void) {
     // Initialize UART communication.
     init_uart();
 
+    // Debug: Show watchdog counter before loading from NVS
+    ESP_LOGI(TAG, "*** DEBUG: watchdog_reset_counter before NVS load (normal mode): %lu ***", watchdog_reset_counter);
+
     load_wifi_config_from_nvs();
     load_mqtt_config_from_nvs();
     load_sample_interval_from_nvs();
     load_bms_topic_from_nvs();
     load_watchdog_counter_from_nvs();
     load_pack_name_from_nvs();
+    
+    // Debug: Show watchdog counter after loading from NVS
+    ESP_LOGI(TAG, "*** DEBUG: watchdog_reset_counter after NVS load (normal mode): %lu ***", watchdog_reset_counter);
     
     ESP_LOGI(TAG, "=== CONFIG LOADED FROM NVS ===");
     ESP_LOGI(TAG, "WiFi SSID: %s", wifi_ssid);
@@ -1884,10 +1693,30 @@ void app_main(void) {
             if (elapsed_ms >= watchdog_timeout_ms) {
                 ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
                 
+                // Debug: Show counter before increment
+                ESP_LOGE(TAG, "*** DEBUG: watchdog_reset_counter BEFORE increment: %lu ***", watchdog_reset_counter);
+                
                 // Increment watchdog reset counter and save to NVS
                 watchdog_reset_counter++;
                 ESP_LOGE(TAG, "Incrementing watchdog reset counter to: %lu", watchdog_reset_counter);
+                
+                // Debug: Show counter after increment
+                ESP_LOGE(TAG, "*** DEBUG: watchdog_reset_counter AFTER increment: %lu ***", watchdog_reset_counter);
+                
                 save_watchdog_counter_to_nvs();
+                
+                // Debug: Verify save by reloading from NVS
+                uint32_t verify_counter = 0;
+                nvs_handle_t verify_handle;
+                esp_err_t verify_err = nvs_open(WIFI_NVS_NAMESPACE, NVS_READONLY, &verify_handle);
+                if (verify_err == ESP_OK) {
+                    esp_err_t get_err = nvs_get_u32(verify_handle, NVS_KEY_WATCHDOG_COUNTER, &verify_counter);
+                    ESP_LOGE(TAG, "*** DEBUG: Verification read from NVS result: %s, value: %lu ***", 
+                             esp_err_to_name(get_err), verify_counter);
+                    nvs_close(verify_handle);
+                } else {
+                    ESP_LOGE(TAG, "*** DEBUG: Failed to open NVS for verification: %s ***", esp_err_to_name(verify_err));
+                }
                 
                 ESP_LOGE(TAG, "Forcing system restart...");
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -2120,12 +1949,12 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         return;
     }
 
-    // Add pack name at the top level first
-    cJSON_AddStringToObject(root, "packName", pack_name);
-
     // Add pack data with temperature sensors and enhanced system info
     cJSON *pack_root = cJSON_CreateObject();
     if (pack_root) {
+        // Add pack name first in the pack object
+        cJSON_AddStringToObject(pack_root, "packName", pack_name);
+        
         // Core pack data
         cJSON_AddNumberToObject(pack_root, "packV", bms_data_ptr->pack_voltage);
         cJSON_AddNumberToObject(pack_root, "packA", bms_data_ptr->pack_current);
@@ -2475,4 +2304,17 @@ void dns_hijack_task(void *pvParameter) {
     ESP_LOGI(TAG, "DNS hijack task shutting down gracefully (%lu requests handled)", dns_requests_handled);
     close(sock);
     vTaskDelete(NULL);
+}
+
+// Test function to manually trigger watchdog reset (for testing only)
+void test_watchdog_reset() {
+    ESP_LOGI(TAG, "=== TESTING WATCHDOG RESET ===");
+    ESP_LOGI(TAG, "Current watchdog_reset_counter: %lu", watchdog_reset_counter);
+    
+    // Increment watchdog reset counter and save to NVS
+    watchdog_reset_counter++;
+    ESP_LOGI(TAG, "Incrementing watchdog reset counter to: %lu", watchdog_reset_counter);
+    save_watchdog_counter_to_nvs();
+    
+    ESP_LOGI(TAG, "Test watchdog reset complete. Counter saved to NVS.");
 }

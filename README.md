@@ -56,6 +56,14 @@ https://a.aliexpress.com/_oClgBbe
 
 ## Configuration & Usage
 
+### WiFi Configuration Improvements
+**Version 1.3.1** includes significant improvements to the WiFi configuration system:
+
+- **Simplified SSID Entry**: Manual text input replaces unreliable WiFi network scanning
+- **Better Reliability**: Eliminated intermittent issues with WiFi dropdown functionality  
+- **Faster Setup**: No waiting for network scans - just type your network name
+- **More Stable**: Reduced complexity leads to more consistent configuration experience
+
 ### 1. Set MQTT Topic (BMS Topic)
 - The MQTT topic used for publishing is now fully configurable via the web interface (captive portal).
 - On the configuration page, set the **BMS Topic** field. The firmware will publish to the topic `BMS/<YourTopic>` (e.g., `BMS/MyBattery`).
@@ -65,11 +73,12 @@ https://a.aliexpress.com/_oClgBbe
 - On boot, if the boot button (GPIO0) is pressed within 10 seconds, the ESP32 will enter Wi-Fi Access Point mode.
 - Connect to the `ESP32-CONFIG` Wi-Fi network from your phone or tablet.
 - A captive portal page will appear, allowing you to set:
-  - Wi-Fi SSID
-  - Wi-Fi Password
-  - MQTT Broker URL (e.g., `mqtt://192.168.1.23`)
-  - Sample interval (milliseconds between each BMS read)
+  - **Wi-Fi SSID** (manual text entry - simply type your network name)
+  - **Wi-Fi Password**
+  - **MQTT Broker URL** (e.g., `mqtt://192.168.1.23`)
+  - **Sample interval** (milliseconds between each BMS read)
   - **BMS Topic** (see above)
+  - **Pack Name** (identifier for your battery pack, appears in MQTT data)
 - Save and reboot to apply settings.
 
 ### 3. Operation
@@ -91,6 +100,8 @@ The ESP32 publishes comprehensive BMS data in a structured JSON format to the co
 ```json
 {
   "pack": {
+    "packName": "MyBatteryPack",         // Pack identifier (configurable)
+    
     // Core pack data
     "packV": 13.28,                    // Total pack voltage (V)
     "packA": 0.0,                      // Pack current (A)
@@ -298,7 +309,7 @@ This project uses a dual-file version management system for consistency between 
 - **Documentation:** Update README and any version references when releasing
 - **Format:** Use semantic versioning (e.g., 1.2.1) without extra whitespace
 
-**Current Version:** 1.3.0
+**Current Version:** 1.3.1
 
 ## Programming Documentation
 

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2025-07-08
+
+### Added
+- **Pack Name Configuration**: Added pack name field to web configuration interface
+- **Pack Name in MQTT**: Pack name now appears as first field in MQTT JSON payload under "pack" object
+- **Persistent Pack Name**: Pack name is stored in NVS and persists across reboots
+
+### Changed
+- **Simplified WiFi Configuration**: Removed WiFi network scan and dropdown functionality
+- **Manual SSID Entry**: WiFi SSID configuration now uses simple text input field
+- **Improved Reliability**: Eliminated unreliable WiFi scan logic that caused configuration issues
+
+### Removed
+- **WiFi Scan Feature**: Removed automatic WiFi network detection and dropdown selection
+- **Scan/Manual Toggle**: Removed UI toggle between scan and manual SSID entry modes
+- **Scan JavaScript**: Removed all WiFi scanning related JavaScript code
+
+### Fixed
+- **Configuration Reliability**: Web configuration interface now works consistently
+- **Pack Name Handling**: Fixed NVS storage and retrieval of pack name
+- **MQTT JSON Structure**: Pack name properly positioned in JSON payload
+- **Code Cleanup**: Removed unused functions and variables
+
+### Technical Details
+- **NVS Storage**: Pack name stored with "pack_name" key in NVS
+- **JSON Position**: Pack name appears as first field: `"pack": {"packName": "value", ...}`
+- **Default Value**: Pack name defaults to "BatteryPack" if not configured
+- **Web Interface**: Streamlined parameters.html with simplified JavaScript
+
 ## [1.3.0] - 2025-07-08
 
 ### Added
@@ -52,6 +81,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Upgrade Notes
 
+### From 1.3.0 to 1.3.1
+- **WiFi Configuration**: WiFi SSID must now be entered manually (no more dropdown scan)
+- **Pack Name**: New pack name field available in configuration interface
+- **Better Reliability**: Web configuration interface is more stable and consistent
+- **No Data Loss**: All existing configuration values preserved during upgrade
+
 ### From 1.2.1 to 1.3.0
 - **Backward Compatibility**: All existing fields remain available
 - **Enhanced Data**: Additional fields provide deeper BMS insights
@@ -59,11 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **New Features**: Utilize structured sections for better data organization
 
 ### Configuration
-- No configuration changes required
-- All existing settings preserved
-- New fields available immediately after update
+- **WiFi Setup**: Enter SSID manually instead of selecting from dropdown
+- **Pack Name**: Configure pack identifier in web interface (optional)
+- **All Other Settings**: Remain unchanged and preserved
 
 ### Integration
-- Existing consumers continue to work unchanged
-- New structured sections available for enhanced integrations
-- Raw field access enables specialized analysis applications
+- **Pack Name**: New field available as first item in "pack" object
+- **Existing Fields**: All continue to work unchanged
+- **MQTT Structure**: Pack name addition does not break existing consumers
