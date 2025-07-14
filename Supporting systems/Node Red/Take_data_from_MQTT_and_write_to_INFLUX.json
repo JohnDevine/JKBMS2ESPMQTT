@@ -1,10 +1,36 @@
 [
     {
+        "id": "79076cf9a50d2158",
+        "type": "tab",
+        "label": "BMS2Influx",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "60dcf62474542643",
+        "type": "function",
+        "z": "79076cf9a50d2158",
+        "name": "Setup pack data for Influx",
+        "func": "function flatten(obj, prefix = '', res = {}) {\n    for (const key in obj) {\n        const val = obj[key];\n        const newKey = prefix ? `${prefix}_${key}` : key;\n        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {\n            flatten(val, newKey, res);\n        } else {\n            res[newKey] = val;\n        }\n    }\n    return res;\n}\n\nconst flat = flatten(msg.payload);\n\n// Extract tag value and remove it from fields\nconst factoryID = flat[\"pack_Naming_of_factory_ID\"] || \"unknown\";\ndelete flat[\"pack_Naming_of_factory_ID\"];\n\n// Final payload: [fields, tags]\nmsg.payload = [\n    flat,\n    {\n        pack_Naming_of_factory_ID: factoryID\n    }\n];\n\nmsg.measurement = \"BMS\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 310,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
         "id": "f5758cf2ab98606b",
         "type": "influxdb out",
         "z": "79076cf9a50d2158",
         "influxdb": "2ed0bc98bcc324f8",
-        "name": "Write to Influx measurement BMS",
+        "name": "Write to Influx  V 1.8 measurement BMS",
         "measurement": "BMS",
         "precision": "",
         "retentionPolicy": "one_week",
@@ -13,9 +39,72 @@
         "retentionPolicyV18Flux": "",
         "org": "organisation",
         "bucket": "bucket",
-        "x": 340,
-        "y": 380,
+        "x": 620,
+        "y": 320,
         "wires": []
+    },
+    {
+        "id": "b14387734726e241",
+        "type": "http request",
+        "z": "79076cf9a50d2158",
+        "name": "",
+        "method": "use",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 670,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "5d369b989e8a66a1",
+        "type": "mqtt in",
+        "z": "79076cf9a50d2158",
+        "name": "Battery Bank pack Info",
+        "topic": "BMS/JKBMS",
+        "qos": "2",
+        "datatype": "json",
+        "broker": "4e9759aa5d998d78",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 120,
+        "y": 120,
+        "wires": [
+            [
+                "7a1f5f2a7988285d"
+            ]
+        ]
+    },
+    {
+        "id": "7a1f5f2a7988285d",
+        "type": "function",
+        "z": "79076cf9a50d2158",
+        "name": "Setup data for insert into database",
+        "func": "\n// === InfluxDB Auth Token ===\nconst token = \"CQcuM3A6AWK7p6z4wDl6eCkWPN-4QAeya-MVy7Yv7NEby2QVN0GMXJmyhnpFsS9h6YzOn0H9rW0yeXvVs9oxag==\";  // Replace this with your actual token\n\n// === Line Protocol Setup ===\nconst measurement = \"battery\";\nconst tags = {\n    packName: msg.payload.pack.packName,\n    deviceId: msg.payload.pack.Device_ID_Code,\n    factory: msg.payload.pack.Naming_of_factory_ID\n};\n\n// === Extract Fields ===\nconst pack = msg.payload.pack;\nconst temps = pack.tempSensorValues || {};\nconst cells = msg.payload.cells || {};\n\nconst fields = {\n    packV: pack.packV,\n    packA: pack.packA,\n    packNumberOfCells: pack.packNumberOfCells,\n    packSOC: pack.packSOC,\n    packMinCellV: pack.packMinCellV,\n    packMaxCellV: pack.packMaxCellV,\n    packCellVDelta: pack.packCellVDelta,\n    numberOfStrings: pack.Number_of_battery_strings_settings,\n    capacityAh: pack.Battery_Capacity_Settings,\n    chargeMosfet: pack.Charging_MOS_switch,\n    dischargeMosfet: pack.Discharge_MOS_switch,\n    boardAddr: pack.Protective_Board_1_Address,\n    batteryType: pack.Battery_type,\n    productionDate: `\"${pack.Date_of_production}\"`,\n    workingTime: pack.System_working_time,\n    softwareVer: `\"${pack.Software_Version_Number}\"`,\n    currentCal: pack.Start_Current_Calibration,\n    actualCapacity: pack.Actual_battery_capacity,\n    // Temperatures\n    NTC0: temps.NTC0,\n    NTC1: temps.NTC1,\n    NTC2: temps.NTC2\n};\n\n// Add cell voltages (up to 16 if present)\nObject.keys(cells).forEach(cell => {\n    const val = cells[cell];\n    if (typeof val === 'number') {\n        fields[cell] = val;\n    }\n});\n\n// === Convert to Line Protocol ===\nconst tagString = Object.entries(tags)\n    .map(([k, v]) => `${k}=${v}`)\n    .join(',');\n\nconst fieldString = Object.entries(fields)\n    .filter(([_, v]) => v !== undefined)\n    .map(([k, v]) => {\n        if (typeof v === \"string\") return `${k}=${v}`;\n        return `${k}=${v}`;\n    })\n    .join(',');\n\nconst timestamp = Date.now() * 1_000_000; // nanoseconds\nmsg.payload = `${measurement},${tagString} ${fieldString} ${timestamp}`;\n\n// === HTTP Request Setup ===\nmsg.headers = {\n    \"Authorization\": \"Token \" + token,\n    \"Content-Type\": \"text/plain\"\n};\nmsg.method = \"POST\";\nmsg.url = \"http://influxdb2:8086/api/v2/write?org=solarblue&bucket=BMS&precision=ns\";\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 120,
+        "wires": [
+            [
+                "b14387734726e241"
+            ]
+        ]
     },
     {
         "id": "2ed0bc98bcc324f8",
@@ -24,12 +113,43 @@
         "port": 8086,
         "protocol": "http",
         "database": "BMS",
-        "name": "BMS database",
+        "name": "New BMS database",
         "usetls": false,
         "tls": "",
         "influxdbVersion": "1.x",
         "url": "http://localhost:8086",
         "timeout": 10,
         "rejectUnauthorized": true
+    },
+    {
+        "id": "4e9759aa5d998d78",
+        "type": "mqtt-broker",
+        "name": "MQTT on RaspberryJack",
+        "broker": "mqtt://mosquitto:1883",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
     }
 ]

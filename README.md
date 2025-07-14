@@ -40,6 +40,14 @@ The onboard LED (GPIO2) provides visual confirmation of system health:
 
 *ESP32 development setup showing the actual hardware configuration with JK BMS, RS485 interface, and monitoring system in operation.*
 
+## Completed Hardware Build
+
+![Completed Hardware Build 1](Hardware/Images/Completed01.jpg)
+
+![Completed Hardware Build 2](Hardware/Images/Completed02.jpg)
+
+*Completed hardware installation showing the ESP32 BMS-to-MQTT converter integrated with JK BMS system for production monitoring.*
+
 ## Where to Buy
 
 I just found this on AliExpress: THB229.89 | 1-10pcs ESP32 WROOM-32 ESP32-S Development Board WiFi+Bluetooth-compatible TYPE-C ESP32 30Pin ESP32 Nodemcu Development Module  

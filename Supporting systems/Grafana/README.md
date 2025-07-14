@@ -26,5 +26,5 @@ Do the following in this order:
 
 ## Dashboard Screenshot
 
-![Grafana BMS Dashboard](../Images/GrafanaBMS.jpg)
+![Grafana BMS Dashboard](Images/GrafanaBMS.jpg)
 

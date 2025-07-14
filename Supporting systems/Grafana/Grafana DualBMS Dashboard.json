@@ -1,4 +1,4 @@
-\{
+{
   "annotations": {
     "list": [
       {
@@ -15,783 +15,52 @@
       }
     ]
   },
-  "description": "Dashboard for showing 1 or 2 BMS inputs.",
+  "description": "Data from the batteries",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
+  "id": 6,
   "links": [],
   "panels": [
     {
       "datasource": {
         "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
+        "uid": "eerly85rktxq8d"
       },
-      "description": "The current voltage of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "red",
             "mode": "thresholds"
           },
           "decimals": 2,
           "mappings": [],
-          "max": 14.8,
-          "min": 10,
-          "noValue": "No Data",
+          "max": 14.6,
+          "min": 12,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red"
+                "color": "dark-red"
               },
               {
-                "color": "green",
+                "color": "dark-green",
                 "value": 12.8
               },
               {
                 "color": "#EAB839",
-                "value": 14.2
-              },
-              {
-                "color": "red",
-                "value": 14.6
+                "value": 13.3
               }
             ]
           },
           "unit": "volt"
         },
         "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": true,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": true,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packV"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id$/"
-            }
-          ]
-        }
-      ],
-      "title": "Voltage (${factory_id})",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
-      },
-      "description": "The two BMS voltages mapped together. Most times they should be identical.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
-          },
-          "custom": {
-            "axisBorderShow": true,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisGridShow": true,
-            "axisLabel": "Volts",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineStyle": {
-              "fill": "solid"
-            },
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "decimals": 2,
-          "mappings": [],
-          "noValue": "No Data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "volt"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "(Test)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "(SB-12-2)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
       },
       "gridPos": {
         "h": 8,
-        "w": 20,
-        "x": 4,
+        "w": 4,
+        "x": 0,
         "y": 0
-      },
-      "id": 3,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.0.2",
-      "targets": [
-        {
-          "alias": "(${factory_id})",
-          "groupBy": [],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE $timeFilter",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packV"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id$/"
-            }
-          ]
-        },
-        {
-          "alias": "(${factory_id_2})",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [],
-          "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id_2$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "B",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packV"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
-        }
-      ],
-      "title": "Historical Voltage Comparison",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
-      },
-      "description": "The current voltage of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "yellow",
-            "mode": "thresholds"
-          },
-          "decimals": 2,
-          "fieldMinMax": true,
-          "mappings": [],
-          "max": 14.8,
-          "min": 10,
-          "noValue": "No Data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red"
-              },
-              {
-                "color": "green",
-                "value": 12.8
-              },
-              {
-                "color": "#EAB839",
-                "value": 14.2
-              },
-              {
-                "color": "red",
-                "value": 14.6
-              }
-            ]
-          },
-          "unit": "volt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 4
-      },
-      "id": 4,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": true,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::field = 'SB-12-1') AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packV"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
-        }
-      ],
-      "title": "Voltage (${factory_id_2})",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
-      },
-      "description": "The current amperage of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "noValue": "No Data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "green",
-                "value": 20
-              },
-              {
-                "color": "#EAB839",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 100
-              }
-            ]
-          },
-          "unit": "amp"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 8
-      },
-      "id": 1,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": true,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::field =~ /^$factory_id$/) AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packA"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id$/"
-            }
-          ]
-        }
-      ],
-      "title": "Amperage (${factory_id})",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
-      },
-      "description": "The two BMS amperages mapped together. Most times they should be identical.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "yellow",
-            "mode": "fixed"
-          },
-          "custom": {
-            "axisBorderShow": true,
-            "axisCenteredZero": true,
-            "axisColorMode": "text",
-            "axisGridShow": true,
-            "axisLabel": "Amps",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineStyle": {
-              "fill": "solid"
-            },
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "decimals": 2,
-          "mappings": [],
-          "noValue": "No Data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "green",
-                "value": 20
-              },
-              {
-                "color": "#EAB839",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 100
-              }
-            ]
-          },
-          "unit": "amp"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "(SB-12-2)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "(SB-12-1)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 20,
-        "x": 4,
-        "y": 8
-      },
-      "id": 6,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.0.2",
-      "targets": [
-        {
-          "alias": "(${factory_id})",
-          "groupBy": [],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE $timeFilter",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packA"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id$/"
-            }
-          ]
-        },
-        {
-          "alias": "(${factory_id_2})",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [],
-          "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id_2$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "B",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packA"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
-        }
-      ],
-      "title": "Historical Amperage Comparison",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
-      },
-      "description": "The current amperage of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "noValue": "No Data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              },
-              {
-                "color": "green",
-                "value": 20
-              },
-              {
-                "color": "#EAB839",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 100
-              }
-            ]
-          },
-          "unit": "amp"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 12
       },
       "id": 7,
       "options": {
@@ -800,7 +69,7 @@
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "last"
           ],
           "fields": "",
           "values": false
@@ -814,189 +83,41 @@
         {
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::field =~ /^$factory_id$/) AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packA"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
-        }
-      ],
-      "title": "Amperage (${factory_id_2})",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
-      },
-      "description": "The current SOC of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "mappings": [],
-          "max": 100,
-          "min": 0,
-          "noValue": "No Data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red"
-              },
-              {
-                "color": "green",
-                "value": 20
-              },
-              {
-                "color": "yellow",
-                "value": 95
-              },
-              {
-                "color": "yellow",
-                "value": 100
-              }
-            ]
-          },
-          "unit": "percent"
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "refId": "A"
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 16
-      },
-      "id": 5,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": true,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.0.2",
-      "targets": [
         {
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::field =~ /^$factory_id$/) AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packSOC"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id$/"
-            }
-          ]
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "refId": "B"
         }
       ],
-      "title": "SOC (${factory_id})",
+      "title": "Pack Current Volts",
       "type": "gauge"
     },
     {
       "datasource": {
         "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
+        "uid": "eerly85rktxq8d"
       },
-      "description": "The two BMS SOCs mapped together. Most times they should be identical.",
+      "description": "The voltage of the complete pack. A pack consists of a number of cells",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
+            "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": true,
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisGridShow": true,
-            "axisLabel": "%",
+            "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
@@ -1010,9 +131,431 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineStyle": {
-              "fill": "solid"
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
             },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "decimals": 3,
+          "mappings": [],
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red"
+              },
+              {
+                "color": "green",
+                "value": 12
+              },
+              {
+                "color": "#EAB839",
+                "value": 13.4
+              },
+              {
+                "color": "red",
+                "value": 13.6
+              }
+            ]
+          },
+          "unit": "volt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "refId": "B"
+        }
+      ],
+      "title": "Pack history Voltage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "eerly85rktxq8d"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "max": 100,
+          "min": -100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": -100
+              },
+              {
+                "color": "#EAB839",
+                "value": -50
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 60
+              },
+              {
+                "color": "dark-red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "amp"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "12.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "refId": "B"
+        }
+      ],
+      "title": "Pack Current Amps",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "eerly85rktxq8d"
+      },
+      "description": "The amperage of the complete pack. A pack consists of a number of cells",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": true,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "decimals": 2,
+          "fieldMinMax": false,
+          "mappings": [],
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "dark-red",
+                "value": -100
+              },
+              {
+                "color": "orange",
+                "value": -70
+              },
+              {
+                "color": "green",
+                "value": -50
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "dark-orange",
+                "value": 70
+              },
+              {
+                "color": "dark-red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "amp"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "refId": "B"
+        }
+      ],
+      "title": "Pack History Amps",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "eerly85rktxq8d"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 85
+              },
+              {
+                "color": "dark-red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 0,
+        "y": 16
+      },
+      "id": 8,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "12.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "refId": "B"
+        }
+      ],
+      "title": "Pack Current SOC",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "eerly85rktxq8d"
+      },
+      "description": "The state of charge history of the complete battery pack. Note that a battery pack consists of a number of cells",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": true,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMax": 100,
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
@@ -1028,10 +571,9 @@
               "mode": "off"
             }
           },
-          "decimals": 0,
+          "decimals": 1,
+          "fieldMinMax": false,
           "mappings": [],
-          "max": 100,
-          "min": 0,
           "noValue": "No Data",
           "thresholds": {
             "mode": "absolute",
@@ -1047,44 +589,237 @@
           },
           "unit": "percent"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "(Test)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "(SB-12-2)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 20,
-        "x": 4,
+        "w": 18,
+        "x": 6,
         "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "refId": "B"
+        }
+      ],
+      "title": "Pack history of State Of Charge.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "eerly85rktxq8d"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3,
+          "mappings": [],
+          "max": 3.7,
+          "min": 2.5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-red"
+              },
+              {
+                "color": "dark-green",
+                "value": 3.1
+              },
+              {
+                "color": "#EAB839",
+                "value": 3.55
+              },
+              {
+                "color": "red",
+                "value": 3.65
+              }
+            ]
+          },
+          "unit": "volt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 24
+      },
+      "id": 11,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "12.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell0V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 1\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell1V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 2\"\n  }))",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell2V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 3\"\n  }))",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell3V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 4\"\n  }))",
+          "refId": "D"
+        }
+      ],
+      "title": "${Battery_pack_01}",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "eerly85rktxq8d"
+      },
+      "description": "This is the history of the individual cells voltages over time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisGridShow": true,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "decimals": 3,
+          "mappings": [],
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-red"
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "green",
+                "value": 3.2
+              },
+              {
+                "color": "#EAB839",
+                "value": 3.4
+              },
+              {
+                "color": "red",
+                "value": 3.65
+              }
+            ]
+          },
+          "unit": "volt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 24
       },
       "id": 9,
       "options": {
@@ -1096,131 +831,104 @@
         },
         "tooltip": {
           "hideZeros": false,
-          "mode": "multi",
+          "mode": "single",
           "sort": "none"
         }
       },
       "pluginVersion": "12.0.2",
       "targets": [
         {
-          "alias": "(${factory_id})",
-          "groupBy": [],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE $timeFilter",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packSOC"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id$/"
-            }
-          ]
-        },
-        {
-          "alias": "(${factory_id_2})",
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [],
           "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"pack_packV\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id_2$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "B",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packSOC"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell0V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 1\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell1V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 2\"\n  }))",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell2V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 3\"\n  }))",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell3V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 4\"\n  }))",
+          "refId": "D"
         }
       ],
-      "title": "Historical SOC Comparison",
+      "title": "${Battery_pack_01} (Individual Cells)",
       "type": "timeseries"
     },
     {
       "datasource": {
         "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
+        "uid": "eerly85rktxq8d"
       },
-      "description": "The current SOC of this BMS, Note: a BMS (Battery Management System) is comprised of 1 or more cells.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0,
+          "decimals": 3,
           "mappings": [],
-          "max": 100,
-          "min": 0,
-          "noValue": "No Data",
+          "max": 3.7,
+          "min": 2.5,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red"
+                "color": "dark-red"
               },
               {
-                "color": "green",
-                "value": 20
+                "color": "dark-green",
+                "value": 3.1
               },
               {
-                "color": "yellow",
-                "value": 95
+                "color": "#EAB839",
+                "value": 3.55
               },
               {
-                "color": "yellow",
-                "value": 100
+                "color": "red",
+                "value": 3.65
               }
             ]
           },
-          "unit": "percent"
+          "unit": "volt"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 4,
+        "h": 8,
+        "w": 6,
         "x": 0,
-        "y": 20
+        "y": 32
       },
-      "id": 8,
+      "id": 12,
       "options": {
         "minVizHeight": 75,
         "minVizWidth": 75,
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "last"
           ],
           "fields": "",
           "values": false
@@ -1234,74 +942,61 @@
         {
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"pack_packV\") FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::field =~ /^$factory_id$/) AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "pack_packSOC"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell0V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 1\"\n  }))",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell1V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 2\"\n  }))",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell2V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 3\"\n  }))",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "eerly85rktxq8d"
+          },
+          "hide": false,
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell3V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> last()\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 4\"\n  }))",
+          "refId": "D"
         }
       ],
-      "title": "SOC (${factory_id_2})",
+      "title": "${Battery_pack_02}",
       "type": "gauge"
     },
     {
       "datasource": {
         "type": "influxdb",
-        "uid": "aeq01ew9j8av4d"
+        "uid": "eerly85rktxq8d"
       },
-      "description": "The voltages of the individual cells",
+      "description": "This is the history of the individual cells voltages over time.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
+            "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": true,
+            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisGridShow": true,
-            "axisLabel": "Volts",
-            "axisPlacement": "left",
+            "axisLabel": "",
+            "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
@@ -1314,9 +1009,6 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineStyle": {
-              "fill": "solid"
-            },
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
@@ -1329,7 +1021,7 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "off"
+              "mode": "line+area"
             }
           },
           "decimals": 3,
@@ -1339,480 +1031,90 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "red"
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "green",
+                "value": 3.2
+              },
+              {
+                "color": "orange",
+                "value": 3.4
+              },
+              {
+                "color": "red",
+                "value": 3.65
               }
             ]
           },
           "unit": "volt"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-1 (Cell 2)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "super-light-red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-1 (Cell 3)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "dark-orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-1 (Cell 4)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "super-light-orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-2 (Cell 1)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "dark-green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-2 (Cell 2)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "super-light-green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-1 (Cell 1)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "dark-red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-2 (Cell 3)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "dark-blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SB-12-2 (Cell 4)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "super-light-blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Test (Cell 1)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "dark-green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Test (Cell 2)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "super-light-green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Test (Cell 3)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "dark-blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Test (Cell 4)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "dark-purple",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 24
+        "w": 18,
+        "x": 6,
+        "y": 32
       },
       "id": 10,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
           "hideZeros": false,
-          "mode": "multi",
+          "mode": "single",
           "sort": "none"
         }
       },
       "pluginVersion": "12.0.2",
       "targets": [
         {
-          "alias": "$factory_id (Cell 1)",
-          "groupBy": [],
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell0V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell0V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=",
-              "value": "$factory_id"
-            }
-          ]
-        },
-        {
-          "alias": "$factory_id (Cell 2)",
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [],
           "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell0V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "B",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell1V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=",
-              "value": "$factory_id"
-            }
-          ]
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell0V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 1\"\n  }))",
+          "refId": "A"
         },
         {
-          "alias": "$factory_id (Cell 3)",
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [],
           "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell0V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "C",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell2V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=",
-              "value": "$factory_id"
-            }
-          ]
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell1V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 2\"\n  }))",
+          "refId": "B"
         },
         {
-          "alias": "$factory_id (Cell 4)",
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [],
           "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell3V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "D",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell3V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=",
-              "value": "$factory_id"
-            }
-          ]
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell2V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 3\"\n  }))",
+          "refId": "C"
         },
         {
-          "alias": "$factory_id_2 (Cell 1)",
           "datasource": {
             "type": "influxdb",
-            "uid": "fephy7x7726f4d"
+            "uid": "eerly85rktxq8d"
           },
-          "groupBy": [],
           "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell3V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "E",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell0V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
-        },
-        {
-          "alias": "$factory_id_2 (Cell 2)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [],
-          "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell3V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "F",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell1V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
-        },
-        {
-          "alias": "$factory_id_2 (Cell 3)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [],
-          "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell3V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "G",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell2V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
-        },
-        {
-          "alias": "$factory_id_2 (Cell 4)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "fephy7x7726f4d"
-          },
-          "groupBy": [],
-          "hide": false,
-          "measurement": "BMS",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT \"cells_cell3V\" FROM \"BMS\" WHERE (\"pack_Naming_of_factory_ID\"::tag =~ /^$factory_id$/) AND $timeFilter",
-          "rawQuery": false,
-          "refId": "H",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "cells_cell3V"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "pack_Naming_of_factory_ID::tag",
-              "operator": "=~",
-              "value": "/^$factory_id_2$/"
-            }
-          ]
+          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell3V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 4\"\n  }))",
+          "refId": "D"
         }
       ],
-      "title": "Cell Voltages",
+      "title": "${Battery_pack_02} (Individual Cells)",
       "type": "timeseries"
     }
   ],
@@ -1826,14 +1128,13 @@
           "text": "SB-12-1",
           "value": "SB-12-1"
         },
-        "definition": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
-        "description": "The name of the BMS .. comes from \"User Private Data\" in BMS setup",
-        "label": "BMS name 1",
-        "name": "factory_id",
+        "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n)",
+        "description": "The first battery pack to display",
+        "label": "First pack",
+        "name": "Battery_pack_01",
         "options": [],
         "query": {
-          "query": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
-          "refId": "InfluxVariableQueryEditor-VariableQuery"
+          "query": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n)"
         },
         "refresh": 1,
         "regex": "",
@@ -1841,17 +1142,16 @@
       },
       {
         "current": {
-          "text": "Test",
-          "value": "Test"
+          "text": "SB-12-2",
+          "value": "SB-12-2"
         },
-        "definition": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
-        "description": "The name of the BMS .. comes from \"User Private Data\" in BMS setup",
-        "label": "BMS name 2",
-        "name": "factory_id_2",
+        "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n)",
+        "description": "The second battery pack to display",
+        "label": "Second pack",
+        "name": "Battery_pack_02",
         "options": [],
         "query": {
-          "query": "SHOW TAG VALUES FROM \"BMS\" WITH KEY = \"pack_Naming_of_factory_ID\"",
-          "refId": "InfluxVariableQueryEditor-VariableQuery"
+          "query": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n)"
         },
         "refresh": 1,
         "regex": "",
@@ -1860,12 +1160,12 @@
     ]
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-12h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Dual BMS",
-  "uid": "f9e79c9b-9e43-4477-a02b-8198afc586c4",
-  "version": 23
+  "title": "Battery data",
+  "uid": "83afb816-308f-453f-bf19-3f785bc466b3",
+  "version": 102
 }
