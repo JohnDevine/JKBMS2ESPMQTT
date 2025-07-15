@@ -58,6 +58,9 @@
 // Watchdog timer includes
 #include "esp_task_wdt.h"
 
+// System monitoring includes
+#include "esp_netif.h"
+
 // Software watchdog variables
 static uint32_t watchdog_timeout_ms = 0;  // Watchdog timeout (10× sample interval)
 static TickType_t last_successful_publish = 0;  // Last successful MQTT publish time
@@ -65,7 +68,7 @@ static bool watchdog_enabled = false;  // Whether watchdog is enabled
 static bool mqtt_publish_success = false;  // Flag for successful MQTT publish
 
 // Debug logging flag - set to false to reduce log output (except watchdog logs)
-static bool debug_logging = true;
+static bool debug_logging = false;
 
 #define WIFI_NVS_NAMESPACE "wifi_cfg"
 #define WIFI_NVS_KEY_SSID "ssid"
@@ -491,7 +494,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
         return;
     }
 
-    printf("Cell Voltages (V):\n");
+    if (debug_logging) printf("Cell Voltages (V):\n");
     float min_cell_voltage = 5.0f; // Initialize with a high value to find the minimum.
     float max_cell_voltage = 0.0f; // Initialize with a low value to find the maximum.
 
@@ -503,7 +506,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
         if ( (cell_data_start_offset + 2) < payload_len) { // Check bounds: need 3 bytes for cell i, last is at offset+2
              uint16_t voltage_mv = unpack_u16_be(payload, cell_data_start_offset + 1); 
              float voltage_v = voltage_mv / 1000.0f; // Convert mV to V.
-             printf("  Cell %2d: %.3f V\n", i + 1, voltage_v);
+             if (debug_logging) printf("  Cell %2d: %.3f V\n", i + 1, voltage_v);
              // Store individual cell voltage
              if (i < 24) { // Ensure we don't write out of bounds of our array
                  current_bms_data.cell_voltages[i] = voltage_v;
@@ -519,9 +522,11 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // Print Min, Max, and Delta cell voltages if cells were processed.
     if (num_cells > 0) {
         if (min_cell_voltage > 4.9f) min_cell_voltage = 0.0f; // If min_cell_voltage wasn't updated, set to 0.
-        printf("Min Cell Voltage: %.3f V\n", min_cell_voltage);
-        printf("Max Cell Voltage: %.3f V\n", max_cell_voltage);
-        printf("Cell Voltage Delta: %.3f V\n", max_cell_voltage - min_cell_voltage);
+        if (debug_logging) {
+            printf("Min Cell Voltage: %.3f V\n", min_cell_voltage);
+            printf("Max Cell Voltage: %.3f V\n", max_cell_voltage);
+            printf("Cell Voltage Delta: %.3f V\n", max_cell_voltage - min_cell_voltage);
+        }
         // Store in global struct
         current_bms_data.num_cells = num_cells;
         current_bms_data.min_cell_voltage = min_cell_voltage;
@@ -543,7 +548,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x80) { // Check ID and enough data (ID + 2 bytes)
         uint16_t temp_fet_raw = unpack_u16_be(payload, current_offset + 1);
         float temp_fet = (temp_fet_raw > 100) ? -(float)(temp_fet_raw - 100) : (float)temp_fet_raw;
-        printf("MOSFET Temperature: %.1f C (raw: %u)\n", temp_fet, temp_fet_raw);
+        if (debug_logging) printf("MOSFET Temperature: %.1f C (raw: %u)\n", temp_fet, temp_fet_raw);
         current_bms_data.mosfet_temp = temp_fet; // Store data
         current_offset += 3; // Advance offset by ID (1) + Data (2).
     } else {
@@ -555,7 +560,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x81) {
         uint16_t temp_1_raw = unpack_u16_be(payload, current_offset + 1);
         float temp_1 = (temp_1_raw > 100) ? -(float)(temp_1_raw - 100) : (float)temp_1_raw;
-        printf("Probe 1 Temperature: %.1f C (raw: %u)\n", temp_1, temp_1_raw);
+        if (debug_logging) printf("Probe 1 Temperature: %.1f C (raw: %u)\n", temp_1, temp_1_raw);
         current_bms_data.probe1_temp = temp_1; // Store data
         current_offset += 3;
     } else {
@@ -567,7 +572,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x82) {
         uint16_t temp_2_raw = unpack_u16_be(payload, current_offset + 1);
         float temp_2 = (temp_2_raw > 100) ? -(float)(temp_2_raw - 100) : (float)temp_2_raw;
-        printf("Probe 2 Temperature: %.1f C (raw: %u)\n", temp_2, temp_2_raw);
+        if (debug_logging) printf("Probe 2 Temperature: %.1f C (raw: %u)\n", temp_2, temp_2_raw);
         current_bms_data.probe2_temp = temp_2; // Store data
         current_offset += 3;
     } else {
@@ -580,7 +585,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x83) {
         uint16_t total_voltage_raw = unpack_u16_be(payload, current_offset + 1); 
         float total_v = total_voltage_raw / 100.0f;
-        printf("Total Battery Voltage: %.2f V (raw: %u)\n", total_v, total_voltage_raw);
+        if (debug_logging) printf("Total Battery Voltage: %.2f V (raw: %u)\n", total_v, total_voltage_raw);
         current_bms_data.pack_voltage = total_v; // Store data
         current_offset += 3;
     } else {
@@ -621,7 +626,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
             ESP_LOGI(TAG, "Current (method 1, frame_len_field >= 260): %.2f A", current_a);
         }
 
-        printf("Current: %.2f A (raw: %u)\n", current_a, current_raw);
+        if (debug_logging) printf("Current: %.2f A (raw: %u)\n", current_a, current_raw);
         current_bms_data.pack_current = current_a; // Store data
         current_offset += 3;
     } else {
@@ -633,7 +638,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // Structure: ID (1 byte) + SOC Data (1 byte, percentage).
     if (payload_len > current_offset + 1 && payload[current_offset] == 0x85) { // Need ID + 1 byte data.
         uint8_t soc_percent = unpack_u8(payload, current_offset + 1);
-        printf("Remaining Capacity (SOC): %u%%\n", soc_percent);
+        if (debug_logging) printf("Remaining Capacity (SOC): %u%%\n", soc_percent);
         current_bms_data.soc_percent = soc_percent; // Store data
         current_offset += 2; // Advance by ID(1) + Data(1).
     } else {
@@ -646,7 +651,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     ESP_LOGI(TAG, "Starting extra field parsing at offset %d, payload length: %d", current_offset, payload_len);
     
     // Debug: Show the raw data we're about to parse
-    if (payload_len > current_offset) {
+    if (debug_logging && payload_len > current_offset) {
         ESP_LOGI(TAG, "Raw data to parse (next 50 bytes):");
         for (int debug_i = current_offset; debug_i < payload_len && debug_i < current_offset + 50; debug_i++) {
             printf("0x%02X ", payload[debug_i]);
@@ -659,14 +664,14 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     int extra_offset = current_offset;
     while (extra_offset < payload_len && extra_fields_count < MAX_EXTRA_FIELDS) {
         uint8_t id = payload[extra_offset];
-        ESP_LOGI(TAG, "Found field ID 0x%02X at offset %d", id, extra_offset);
+        if (debug_logging) ESP_LOGI(TAG, "Found field ID 0x%02X at offset %d", id, extra_offset);
         
         // Check if this field ID has already been processed
         bool already_exists = false;
         for (int j = 0; j < extra_fields_count; j++) {
             if (extra_fields[j].id == id) {
                 already_exists = true;
-                ESP_LOGW(TAG, "DUPLICATE DETECTED: Field ID 0x%02X already exists at index %d", id, j);
+                if (debug_logging) ESP_LOGW(TAG, "DUPLICATE DETECTED: Field ID 0x%02X already exists at index %d", id, j);
                 break;
             }
         }
@@ -739,16 +744,16 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
                 }
             }
             if (!found) {
-                ESP_LOGW(TAG, "UNKNOWN field ID 0x%02X at offset %d, skipping", id, extra_offset);
+                if (debug_logging) ESP_LOGW(TAG, "UNKNOWN field ID 0x%02X at offset %d, skipping", id, extra_offset);
                 extra_offset++;
             }
         } else {
             // Skip this duplicate field
-            ESP_LOGW(TAG, "SKIPPING duplicate field ID 0x%02X", id);
+            if (debug_logging) ESP_LOGW(TAG, "SKIPPING duplicate field ID 0x%02X", id);
             int found = 0;
             for (size_t i = 0; i < BMS_IDCODES_COUNT; ++i) {
                 if (bms_idcodes[i].id == id) {
-                    ESP_LOGI(TAG, "Skipping %d bytes for duplicate 0x%02X", bms_idcodes[i].byte_len, id);
+                    if (debug_logging) ESP_LOGI(TAG, "Skipping %d bytes for duplicate 0x%02X", bms_idcodes[i].byte_len, id);
                     extra_offset += 1 + bms_idcodes[i].byte_len;
                     found = 1;
                     break;
@@ -764,18 +769,18 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     ESP_LOGI(TAG, "=== EXTRA FIELDS PARSING COMPLETE ===");
     ESP_LOGI(TAG, "Parsed %d unique extra fields", extra_fields_count);
 
-    printf("----------------------------------------\n"); // Separator for console output.
+    if (debug_logging) printf("----------------------------------------\n"); // Separator for console output.
 
     // After parsing all data and populating current_bms_data
     // Call function to publish data via MQTT
     // This check ensures we only try to publish if we have some valid cell data
-    printf("[DEBUG] Checking publish condition: num_cells=%d\n", current_bms_data.num_cells);
+    if (debug_logging) printf("[DEBUG] Checking publish condition: num_cells=%d\n", current_bms_data.num_cells);
     if (current_bms_data.num_cells > 0) {
-        printf("[DEBUG] Calling publish_bms_data_mqtt...\n");
+        if (debug_logging) printf("[DEBUG] Calling publish_bms_data_mqtt...\n");
         publish_bms_data_mqtt(&current_bms_data);
-        printf("[DEBUG] publish_bms_data_mqtt returned\n");
+        if (debug_logging) printf("[DEBUG] publish_bms_data_mqtt returned\n");
     } else {
-        printf("[DEBUG] Not publishing - no valid cell data\n");
+        if (debug_logging) printf("[DEBUG] Not publishing - no valid cell data\n");
     }
 }
 
@@ -1058,13 +1063,23 @@ void save_pack_name_to_nvs(const char *name) {
 
 // SPIFFS init
 void init_spiffs() {
+    ESP_LOGI(TAG, "Initializing SPIFFS...");
     esp_vfs_spiffs_conf_t conf = {
         .base_path = "/spiffs",
         .partition_label = NULL,
         .max_files = 5,
         .format_if_mount_failed = true
     };
+    
     ESP_ERROR_CHECK(esp_vfs_spiffs_register(&conf));
+    
+    size_t total = 0, used = 0;
+    esp_err_t ret = esp_spiffs_info(NULL, &total, &used);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "SPIFFS: %d kB total, %d kB used", total / 1024, used / 1024);
+    }
 }
 
 // HTTP handler for /params.json
@@ -1473,7 +1488,9 @@ static void start_ap_and_captive_portal() {
     vTaskDelay(pdMS_TO_TICKS(1000));
     
     // Start SPIFFS
+    ESP_LOGI(TAG, "About to call init_spiffs()...");
     init_spiffs();
+    ESP_LOGI(TAG, "init_spiffs() completed successfully");
     
     // Start HTTP server
     httpd_handle_t server = NULL;
@@ -1661,6 +1678,12 @@ void app_main(void) {
     ESP_LOGI(TAG, "Sample interval (ms): %ld", sample_interval_ms);
     ESP_LOGI(TAG, "Watchdog reset counter: %lu", watchdog_reset_counter);
     ESP_LOGI(TAG, "Pack name: %s", pack_name);
+    
+    // Initialize SPIFFS for normal operation mode
+    ESP_LOGI(TAG, "About to call init_spiffs() in normal mode...");
+    init_spiffs();
+    ESP_LOGI(TAG, "init_spiffs() completed successfully in normal mode");
+    
     ESP_LOGI(TAG, "=== STARTING WIFI INIT ===");
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta(); // Initialize Wi-Fi
@@ -1929,14 +1952,86 @@ static void mqtt_app_start(void) {
     ESP_LOGI(TAG, "MQTT client started.");
 }
 
+// Helper functions for processor metrics
+static int32_t get_wifi_rssi_percent(void) {
+    wifi_ap_record_t ap_info;
+    esp_err_t ret = esp_wifi_sta_get_ap_info(&ap_info);
+    if (ret == ESP_OK) {
+        int32_t rssi_dbm = ap_info.rssi;
+        // Convert RSSI from dBm to percentage
+        // Typical range: -100 dBm (0%) to -50 dBm (100%)
+        int32_t rssi_percent;
+        if (rssi_dbm >= -50) {
+            rssi_percent = 100;
+        } else if (rssi_dbm <= -100) {
+            rssi_percent = 0;
+        } else {
+            // Linear mapping: -100 dBm = 0%, -50 dBm = 100%
+            rssi_percent = 2 * (rssi_dbm + 100);
+        }
+        return rssi_percent;
+    }
+    return 0; // Error value - 0% signal
+}
+
+static char* get_ip_address(void) {
+    static char ip_str[16];
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif) {
+        esp_netif_ip_info_t ip_info;
+        esp_err_t ret = esp_netif_get_ip_info(netif, &ip_info);
+        if (ret == ESP_OK) {
+            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+            return ip_str;
+        }
+    }
+    return "0.0.0.0";
+}
+
+static float get_cpu_temperature(void) {
+    // ESP32 temperature reading is complex and requires additional configuration
+    // For now, return a placeholder that could be enhanced later
+    // Alternative: Use ADC reading from internal temperature sensor or external sensor
+    return 25.0 + (esp_random() % 20); // Simulated temperature 25-45°C for demonstration
+}
+
+static char* get_software_version(void) {
+    static char version_str[16] = "0.0.0"; // Default fallback - indicates version file not read
+    static bool version_loaded = false;
+    
+    if (!version_loaded) {
+        ESP_LOGI(TAG, "Attempting to read version from /spiffs/version.txt");
+        FILE *version_file = fopen("/spiffs/version.txt", "r");
+        if (version_file) {
+            ESP_LOGI(TAG, "Version file opened successfully");
+            if (fgets(version_str, sizeof(version_str), version_file)) {
+                ESP_LOGI(TAG, "Read version string: '%s'", version_str);
+                // Remove trailing newline if present
+                char *newline = strchr(version_str, '\n');
+                if (newline) *newline = '\0';
+                char *carriage_return = strchr(version_str, '\r');
+                if (carriage_return) *carriage_return = '\0';
+                ESP_LOGI(TAG, "Cleaned version string: '%s'", version_str);
+            } else {
+                ESP_LOGE(TAG, "Failed to read from version file");
+            }
+            fclose(version_file);
+        } else {
+            ESP_LOGE(TAG, "Failed to open /spiffs/version.txt - file may not exist or SPIFFS not mounted");
+        }
+        version_loaded = true;
+    }
+    return version_str;
+}
+
 // Placeholder for publishing BMS data
 // This function will be expanded to create and send the two JSON messages
 void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
-    printf("[DEBUG] publish_bms_data_mqtt() called with num_cells=%d\n", bms_data_ptr->num_cells);
+    if (debug_logging) printf("[DEBUG] publish_bms_data_mqtt() called with num_cells=%d\n", bms_data_ptr->num_cells);
     
     if (!mqtt_client) {
         ESP_LOGE(TAG, "MQTT client not initialized!");
-        printf("[DEBUG] MQTT client not initialized - returning\n");
+        if (debug_logging) printf("[DEBUG] MQTT client not initialized - returning\n");
         return;
     }
 
@@ -1947,6 +2042,31 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
     if (!root) {
         ESP_LOGE(TAG, "Failed to create cJSON root object.");
         return;
+    }
+
+    // Add processor metrics data first
+    cJSON *processor_root = cJSON_CreateObject();
+    if (processor_root) {
+        // WiFi RSSI as percentage
+        int32_t wifi_rssi_percent = get_wifi_rssi_percent();
+        cJSON_AddNumberToObject(processor_root, "WiFiRSSI", wifi_rssi_percent);
+        
+        // IP Address
+        char *ip_address = get_ip_address();
+        cJSON_AddStringToObject(processor_root, "IPAddress", ip_address);
+        
+        // CPU Temperature
+        float cpu_temp = get_cpu_temperature();
+        cJSON_AddNumberToObject(processor_root, "CPUTemperature", cpu_temp);
+        
+        // Software Version
+        char *software_version = get_software_version();
+        cJSON_AddStringToObject(processor_root, "SoftwareVersion", software_version);
+        
+        // Watchdog Restart Count
+        cJSON_AddNumberToObject(processor_root, "WDTRestartCount", watchdog_reset_counter);
+        
+        cJSON_AddItemToObject(root, "processor", processor_root);
     }
 
     // Add pack data with temperature sensors and enhanced system info
@@ -2103,7 +2223,7 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
                     field_id == 0xB4 || field_id == 0xB5 || field_id == 0xB6 || field_id == 0xB7 ||
                     field_id == 0xB8 || field_id == 0xB9 || field_id == 0xBA ||
                     // Include any other fields that might be present (for maximum coverage)
-                    (field_id >= 0x80 && field_id <= 0xFF)) {
+                    field_id >= 0x80) {
                     
                     char sanitized[64];
                     int si = 0;
@@ -2163,8 +2283,8 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         char topic[64];
         // Use bms_topic directly without any BMS prefix
         snprintf(topic, sizeof(topic), "%s", bms_topic);
-        printf("[DEBUG] About to publish to topic: %s\n", topic);
-        printf("[DEBUG] JSON payload length: %d\n", strlen(json_string));
+        if (debug_logging) printf("[DEBUG] About to publish to topic: %s\n", topic);
+        if (debug_logging) printf("[DEBUG] JSON payload length: %d\n", strlen(json_string));
         esp_mqtt_client_publish(mqtt_client, topic, json_string, 0, 1, 0);
         ESP_LOGI(TAG, "Published to %s (length: %d)", topic, strlen(json_string));
         free(json_string);

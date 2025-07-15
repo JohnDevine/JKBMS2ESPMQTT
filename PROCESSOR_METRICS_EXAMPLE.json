@@ -1,0 +1,37 @@
+{
+  "pack": {
+    "packName": "Set in Parameters",
+    "packV": 52.34,
+    "packA": -2.15,
+    "packNumberOfCells": 16,
+    "packSOC": 85,
+    "packMinCellV": 3.265,
+    "packMaxCellV": 3.275,
+    "packCellVDelta": 0.010,
+    "tempSensorValues": {
+      "NTC0": 23.5,
+      "NTC1": 24.2,
+      "NTC2": 23.8
+    },
+    "systemStatus": {
+      "chargeMosfetStatus": 1,
+      "dischargeMosfetStatus": 1,
+      "balancingActive": 0
+    },
+    "...additional pack data..."
+  },
+  "processor": {
+    "WiFiRSSI": -45,
+    "IPAddress": "192.168.1.150",
+    "CPUTemperature": 52.3,
+    "SoftwareVersion": "1.3.0",
+    "WDTRestartCount": 2
+  },
+  "cells": {
+    "cell0V": 3.265,
+    "cell1V": 3.270,
+    "cell2V": 3.268,
+    "cell3V": 3.272,
+    "...additional cells..."
+  }
+}

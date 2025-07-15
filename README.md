@@ -102,11 +102,20 @@ https://a.aliexpress.com/_oClgBbe
 
 ## MQTT Data Structure
 
-The ESP32 publishes comprehensive BMS data in a structured JSON format to the configured MQTT topic. The payload includes over 30 different BMS parameters organized into logical sections.
+The ESP32 publishes comprehensive BMS data in a structured JSON format to the configured MQTT topic. The payload includes over 30 different BMS parameters plus ESP32 system metrics organized into logical sections.
 
 ### Main Data Structure
 ```json
 {
+  // ESP32 processor metrics
+  "processor": {
+    "WiFiRSSI": 75,                    // WiFi signal strength (% - 0-100%)
+    "IPAddress": "192.168.1.150",      // Current IP address
+    "CPUTemperature": 32.0,            // ESP32 CPU temperature (°C - placeholder*)
+    "SoftwareVersion": "1.3.0",        // Firmware version
+    "WDTRestartCount": 2               // Watchdog restart counter
+  },
+  
   "pack": {
     "packName": "MyBatteryPack",         // Pack identifier (configurable)
     
@@ -199,37 +208,46 @@ The ESP32 publishes comprehensive BMS data in a structured JSON format to the co
 
 ### Data Categories
 
-#### 1. **Core Pack Data**
+#### 1. **Processor Metrics** (ESP32 System Data)
+- WiFi signal strength (percentage, 0-100%)
+- Network configuration (IP address)
+- Hardware monitoring (CPU temperature - *currently placeholder implementation*)
+- Firmware version information
+- System reliability (watchdog restart count)
+
+> **Note**: CPU temperature currently returns a placeholder value (25-45°C range). A full implementation would require enabling the ESP-IDF temperature sensor component in menuconfig.
+
+#### 2. **Core Pack Data**
 - Voltage, current, SOC, cell count
 - Cell voltage statistics (min, max, delta)
 - Essential operational parameters
 
-#### 2. **Temperature Monitoring**
+#### 3. **Temperature Monitoring**
 - MOSFET temperature (power electronics)
 - Temperature probe readings (2 external probes)
 - Temperature protection and recovery thresholds
 
-#### 3. **System Status**
+#### 4. **System Status**
 - MOSFET switch states (charge/discharge)
 - Active balancing status
 - Operational mode indicators
 
-#### 4. **Configuration Parameters**
+#### 5. **Configuration Parameters**
 - Battery specifications (capacity, type, strings)
 - Calibration values (current, voltage)
 - Protection settings and thresholds
 
-#### 5. **System Information**
+#### 6. **System Information**
 - Device identification and version info
 - Production date and factory data
 - Operational statistics (working time)
 
-#### 6. **Cell Data**
+#### 7. **Cell Data**
 - Individual cell voltages
 - Cell-level monitoring data
 
 ### Data Reliability
-- **Payload size**: ~2,760-2,780 characters
+- **Payload size**: ~2,900-2,920 characters (includes processor metrics)
 - **Update frequency**: Every 5-6 seconds (configurable)
 - **Comprehensive coverage**: All 30+ available BMS protocol fields
 - **Multiple formats**: Structured sections + individual named fields + raw hex data
@@ -448,33 +466,39 @@ The ESP-IDF Task Watchdog Timer (TWDT) is configured via menuconfig. The most im
 The firmware includes a debug logging control to manage serial output verbosity for development and troubleshooting.
 
 ### Debug Logging Control
-- **Location:** `src/main.c`, line ~40
+- **Location:** `src/main.c`, line ~71
 - **Variable:** `static bool debug_logging = false;`
 - **Default:** Disabled (`false`) for production use
 
 ### What It Controls
 When `debug_logging = true`, the following additional logs are enabled:
-- BMS command transmission details
-- UART echo handling information
-- BMS data read cycle timing
-- Sample interval wait messages
+- **BMS Data Parsing:** Individual cell voltages, temperatures, pack voltage/current/SOC
+- **Raw Protocol Data:** Hex dump of BMS response frames (first 50 bytes)
+- **MQTT Publishing:** Payload lengths, topic information, publish status
+- **Detailed Operation:** Step-by-step BMS communication and data processing
 
 ### Always Active (Independent of Debug Flag)
 The following logs are **always** shown regardless of the debug setting:
 - **Watchdog logs:** Timeout values, enable/disable status, timeout events
 - **System startup:** Initialization, configuration values, Wi-Fi connection
-- **MQTT events:** Connection status, publish confirmations, errors
+- **MQTT events:** Connection status, basic publish confirmations, errors
 - **Critical errors:** BMS communication failures, system issues
+- **ESP System Logs:** At ESP_LOG_WARN level and above
 
 ### How to Enable Debug Logging
 1. Open `src/main.c`
-2. Find the line: `static bool debug_logging = false;`
+2. Find the line: `static bool debug_logging = false;` (around line 71)
 3. Change to: `static bool debug_logging = true;`
 4. Rebuild and upload the firmware: `pio run --target upload`
 
+**Optional: Increase ESP Log Level for More System Details**
+1. Find line ~1583: `esp_log_level_set("*", ESP_LOG_WARN);`
+2. Change to: `esp_log_level_set("*", ESP_LOG_INFO);` for detailed system logs
+3. Or use: `esp_log_level_set("*", ESP_LOG_DEBUG);` for maximum verbosity
+
 ### When to Use
-- **Production/Normal Use:** Keep disabled (`false`) for cleaner logs
-- **Development/Troubleshooting:** Enable (`true`) for detailed operation information
+- **Production/Normal Use:** Keep disabled (`false`) for cleaner logs and better performance
+- **Development/Troubleshooting:** Enable (`true`) for detailed BMS data analysis
 - **System Monitoring:** Watchdog and critical logs are always visible
 
 This approach ensures essential system information is always logged while allowing detailed debugging when needed.
