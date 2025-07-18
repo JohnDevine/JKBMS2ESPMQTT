@@ -203,7 +203,7 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR PACK VOLTAGE HISTORY - Query A (Battery Pack 01) ===\n// Copy this entire block into your Grafana panel Query A\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))\n",
           "refId": "A"
         },
         {
@@ -212,7 +212,7 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR PACK VOLTAGE HISTORY - Query B (Battery Pack 02) ===\n// Copy this entire block into your Grafana panel Query B\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packV\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))\n",
           "refId": "B"
         }
       ],
@@ -429,7 +429,7 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR PACK CURRENT HISTORY - Query A (Battery Pack 01) ===\n// Copy this entire block into your Grafana panel Query A\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))\n",
           "refId": "A"
         },
         {
@@ -438,7 +438,7 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR PACK CURRENT HISTORY - Query B (Battery Pack 02) ===\n// Copy this entire block into your Grafana panel Query B\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packA\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))\n",
           "refId": "B"
         }
       ],
@@ -621,7 +621,7 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR PACK SOC HISTORY - Query A (Battery Pack 01) ===\n// Copy this entire block into your Grafana panel Query A\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}\"\n  }))\n",
           "refId": "A"
         },
         {
@@ -630,7 +630,7 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR PACK SOC HISTORY - Query B (Battery Pack 02) ===\n// Copy this entire block into your Grafana panel Query B\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"packSOC\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}\"\n  }))\n",
           "refId": "B"
         }
       ],
@@ -843,35 +843,8 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell0V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 1\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR INDIVIDUAL CELL VOLTAGES - Query A (Battery Pack 01) ===\n// Copy this entire block into your Grafana panel Query A\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r.packName == \"${Battery_pack_01}\" and\n    (r._field == \"cell0V\" or r._field == \"cell1V\" or r._field == \"cell2V\" or r._field == \"cell3V\" or\n     r._field == \"cell4V\" or r._field == \"cell5V\" or r._field == \"cell6V\" or r._field == \"cell7V\" or\n     r._field == \"cell8V\" or r._field == \"cell9V\" or r._field == \"cell10V\" or r._field == \"cell11V\" or\n     r._field == \"cell12V\" or r._field == \"cell13V\" or r._field == \"cell14V\" or r._field == \"cell15V\")\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_01}_\" + r._field\n  }))\n",
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "eerly85rktxq8d"
-          },
-          "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell1V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 2\"\n  }))",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "eerly85rktxq8d"
-          },
-          "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell2V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 3\"\n  }))",
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "eerly85rktxq8d"
-          },
-          "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell3V\" and\n    r.packName == \"${Battery_pack_01}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 4\"\n  }))",
-          "refId": "D"
         }
       ],
       "title": "${Battery_pack_01} (Individual Cells)",
@@ -1083,35 +1056,8 @@
             "uid": "eerly85rktxq8d"
           },
           "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell0V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 1\"\n  }))",
+          "query": "// === COMPLETE QUERY FOR INDIVIDUAL CELL VOLTAGES - Query B (Battery Pack 02) ===\n// Copy this entire block into your Grafana panel Query B\n\n// Calculate time range duration in seconds (simpler approach)\ntimeRangeDuration = uint(v: v.timeRangeStop) - uint(v: v.timeRangeStart)\n\nbucketName = if timeRangeDuration <= 21600000000000 then \"BMS\"              // ≤ 6 hours: raw 5s data\n             else if timeRangeDuration <= 172800000000000 then \"BMS_30s\"    // ≤ 2 days: 30s aggregates\n             else if timeRangeDuration <= 1209600000000000 then \"BMS_5m\"    // ≤ 2 weeks: 5m aggregates\n             else \"BMS_1h\"                                                   // > 2 weeks: 1h aggregates\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r.packName == \"${Battery_pack_02}\" and\n    (r._field == \"cell0V\" or r._field == \"cell1V\" or r._field == \"cell2V\" or r._field == \"cell3V\" or\n     r._field == \"cell4V\" or r._field == \"cell5V\" or r._field == \"cell6V\" or r._field == \"cell7V\" or\n     r._field == \"cell8V\" or r._field == \"cell9V\" or r._field == \"cell10V\" or r._field == \"cell11V\" or\n     r._field == \"cell12V\" or r._field == \"cell13V\" or r._field == \"cell14V\" or r._field == \"cell15V\")\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"${Battery_pack_02}_\" + r._field\n  }))\n",
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "eerly85rktxq8d"
-          },
-          "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell1V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 2\"\n  }))",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "eerly85rktxq8d"
-          },
-          "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell2V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 3\"\n  }))",
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "eerly85rktxq8d"
-          },
-          "hide": false,
-          "query": "from(bucket: \"BMS\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"battery\" and\n    r._field == \"cell3V\" and\n    r.packName == \"${Battery_pack_02}\"\n  )\n  |> map(fn: (r) => ({\n    _time: r._time,\n    _value: r._value,\n    _field: \"Cell 4\"\n  }))",
-          "refId": "D"
         }
       ],
       "title": "${Battery_pack_02} (Individual Cells)",
@@ -1128,13 +1074,13 @@
           "text": "SB-12-1",
           "value": "SB-12-1"
         },
-        "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n)",
+        "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n  )",
         "description": "The first battery pack to display",
         "label": "First pack",
         "name": "Battery_pack_01",
         "options": [],
         "query": {
-          "query": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n)"
+          "query": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n  )"
         },
         "refresh": 1,
         "regex": "",
@@ -1142,8 +1088,8 @@
       },
       {
         "current": {
-          "text": "SB-12-2",
-          "value": "SB-12-2"
+          "text": "SB-12-1",
+          "value": "SB-12-1"
         },
         "definition": "import \"influxdata/influxdb/schema\"\n\nschema.tagValues(\n  bucket: \"BMS\",\n  tag: \"packName\"\n)",
         "description": "The second battery pack to display",
@@ -1160,12 +1106,12 @@
     ]
   },
   "time": {
-    "from": "now-12h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "Battery data",
   "uid": "83afb816-308f-453f-bf19-3f785bc466b3",
-  "version": 102
+  "version": 113
 }
