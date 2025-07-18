@@ -54,6 +54,7 @@
 #include "esp_flash.h"
 #include "spi_flash_mmap.h"
 #include "esp_partition.h"
+#include "esp_http_server.h"
 
 // Watchdog timer includes
 #include "esp_task_wdt.h"
@@ -223,6 +224,8 @@ static esp_err_t params_update_post_handler(httpd_req_t *req);
 static esp_err_t parameters_html_handler(httpd_req_t *req);
 static esp_err_t captive_redirect_handler(httpd_req_t *req);
 static esp_err_t sysinfo_json_get_handler(httpd_req_t *req);
+static esp_err_t ota_firmware_handler(httpd_req_t *req);
+static esp_err_t ota_filesystem_handler(httpd_req_t *req);
 
 // Initializes the UART communication peripheral.
 void init_uart();
@@ -1433,6 +1436,304 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// OTA Firmware Update Handler
+static esp_err_t ota_firmware_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "OTA firmware handler called - Content-Length: %d", req->content_len);
+    ESP_LOGI(TAG, "Request method: %d, URI: %s", req->method, req->uri);
+    
+    // Add CORS headers
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    
+    // Handle preflight requests
+    if (req->method == HTTP_OPTIONS) {
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+    
+    esp_ota_handle_t ota_handle = 0;
+    const esp_partition_t *ota_partition = NULL;
+    esp_err_t err = ESP_OK;
+    char *buf = NULL;
+    const size_t buffer_size = 2048;  // Reduced buffer size for better memory management
+    int received = 0;
+    int remaining = req->content_len;
+
+    ESP_LOGI(TAG, "Starting OTA firmware update, size: %d bytes", remaining);
+    
+    // Allocate buffer on heap to avoid stack overflow
+    buf = malloc(buffer_size);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate %d bytes for upload buffer", buffer_size);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+        return ESP_FAIL;
+    }
+
+    // Get next OTA partition
+    ota_partition = esp_ota_get_next_update_partition(NULL);
+    if (!ota_partition) {
+        ESP_LOGE(TAG, "No OTA partition found");
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition found");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%lx", 
+             ota_partition->subtype, ota_partition->address);
+
+    // Begin OTA
+    err = esp_ota_begin(ota_partition, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA begin failed");
+        return ESP_FAIL;
+    }
+
+    // Receive and write firmware data
+    int timeout_count = 0;
+    int zero_recv_count = 0;
+    int last_fw_progress = -1;  // Move static variable to local scope
+    
+    while (remaining > 0) {
+        int chunk_size = (remaining < buffer_size) ? remaining : buffer_size;
+        int recv_len = httpd_req_recv(req, buf, chunk_size);
+        
+        if (recv_len < 0) {
+            if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
+                timeout_count++;
+                ESP_LOGW(TAG, "Socket timeout #%d, continuing... (%d bytes remaining)", timeout_count, remaining);
+                if (timeout_count > 15) {  // Increased tolerance for large files
+                    ESP_LOGE(TAG, "Too many timeouts, aborting");
+                    esp_ota_abort(ota_handle);
+                    free(buf);
+                    httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "Upload timeout - too many socket timeouts");
+                    return ESP_FAIL;
+                }
+                vTaskDelay(pdMS_TO_TICKS(200));  // Longer delay for large file processing
+                continue;
+            }
+            ESP_LOGE(TAG, "File reception failed with error: %d", recv_len);
+            esp_ota_abort(ota_handle);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "File reception failed - connection error");
+            return ESP_FAIL;
+        }
+        
+        if (recv_len == 0) {
+            zero_recv_count++;
+            ESP_LOGW(TAG, "Received 0 bytes #%d, continuing... (%d bytes remaining)", zero_recv_count, remaining);
+            if (zero_recv_count > 8) {  // Increased tolerance for large files
+                ESP_LOGE(TAG, "Too many zero-byte receives, connection likely closed");
+                esp_ota_abort(ota_handle);
+                free(buf);
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Connection closed unexpectedly");
+                return ESP_FAIL;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));  // Longer delay before retry
+            continue;
+        }
+        
+        // Reset counters on successful receive
+        timeout_count = 0;
+        zero_recv_count = 0;
+
+        err = esp_ota_write(ota_handle, buf, recv_len);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
+            esp_ota_abort(ota_handle);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA write failed - firmware corrupted?");
+            return ESP_FAIL;
+        }
+
+        received += recv_len;
+        remaining -= recv_len;
+        
+        // Log progress every 5% for large files
+        int progress = (received * 100) / req->content_len;
+        if (progress != last_fw_progress && progress % 5 == 0) {
+            ESP_LOGI(TAG, "Firmware Progress: %d%% (%d/%d bytes, free heap: %lu)", 
+                     progress, received, req->content_len, (unsigned long)esp_get_free_heap_size());
+            last_fw_progress = progress;
+        }
+        
+        // Yield to other tasks periodically for large uploads
+        if ((received % (buffer_size * 4)) == 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));  // Brief yield every ~8KB
+        }
+    }
+
+    free(buf);  // Clean up allocated buffer
+
+    // End OTA
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+        if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Firmware validation failed - invalid binary");
+        } else {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA end failed");
+        }
+        return ESP_FAIL;
+    }
+
+    // Set boot partition
+    err = esp_ota_set_boot_partition(ota_partition);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Set boot partition failed");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "OTA firmware update successful, rebooting...");
+    httpd_resp_sendstr(req, "Firmware Update Successful! Rebooting...");
+    
+    // Reboot after a short delay
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    
+    return ESP_OK;
+}
+
+// OTA Filesystem Update Handler
+static esp_err_t ota_filesystem_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "OTA filesystem handler called - Content-Length: %d", req->content_len);
+    ESP_LOGI(TAG, "Request method: %d, URI: %s", req->method, req->uri);
+    
+    // Add CORS headers
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    
+    // Handle preflight requests
+    if (req->method == HTTP_OPTIONS) {
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+    
+    const esp_partition_t *spiffs_partition = NULL;
+    esp_err_t err = ESP_OK;
+    char *buf = NULL;
+    const size_t buffer_size = 2048;  // Reduced buffer size for better memory management
+    int received = 0;
+    int remaining = req->content_len;
+
+    ESP_LOGI(TAG, "Starting OTA filesystem update, size: %d bytes", remaining);
+    
+    // Allocate buffer on heap to avoid stack overflow
+    buf = malloc(buffer_size);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate %d bytes for upload buffer", buffer_size);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
+        return ESP_FAIL;
+    }
+
+    // Find SPIFFS partition
+    spiffs_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+    if (!spiffs_partition) {
+        ESP_LOGE(TAG, "No SPIFFS partition found");
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No SPIFFS partition found");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Erasing SPIFFS partition at offset 0x%lx, size: %lu bytes", 
+             spiffs_partition->address, spiffs_partition->size);
+
+    // Erase the partition first
+    err = esp_partition_erase_range(spiffs_partition, 0, spiffs_partition->size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to erase SPIFFS partition: %s", esp_err_to_name(err));
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to erase SPIFFS partition");
+        return ESP_FAIL;
+    }
+
+    // Write filesystem data
+    size_t offset = 0;
+    int timeout_count = 0;
+    int zero_recv_count = 0;
+    int last_fs_progress = -1;  // Move static variable to local scope
+    
+    while (remaining > 0) {
+        int chunk_size = (remaining < buffer_size) ? remaining : buffer_size;
+        int recv_len = httpd_req_recv(req, buf, chunk_size);
+        
+        if (recv_len < 0) {
+            if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
+                timeout_count++;
+                ESP_LOGW(TAG, "Socket timeout #%d, continuing... (%d bytes remaining)", timeout_count, remaining);
+                if (timeout_count > 15) {  // Increased tolerance for large files
+                    ESP_LOGE(TAG, "Too many timeouts, aborting");
+                    free(buf);
+                    httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "Upload timeout - too many socket timeouts");
+                    return ESP_FAIL;
+                }
+                vTaskDelay(pdMS_TO_TICKS(200));  // Longer delay for large file processing
+                continue;
+            }
+            ESP_LOGE(TAG, "File reception failed with error: %d", recv_len);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "File reception failed - connection error");
+            return ESP_FAIL;
+        }
+        
+        if (recv_len == 0) {
+            zero_recv_count++;
+            ESP_LOGW(TAG, "Received 0 bytes #%d, continuing... (%d bytes remaining)", zero_recv_count, remaining);
+            if (zero_recv_count > 8) {  // Increased tolerance for large files
+                ESP_LOGE(TAG, "Too many zero-byte receives, connection likely closed");
+                free(buf);
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Connection closed unexpectedly");
+                return ESP_FAIL;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));  // Longer delay before retry
+            continue;
+        }
+        
+        // Reset counters on successful receive
+        timeout_count = 0;
+        zero_recv_count = 0;
+
+        err = esp_partition_write(spiffs_partition, offset, buf, recv_len);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_partition_write failed: %s", esp_err_to_name(err));
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Partition write failed - flash error");
+            return ESP_FAIL;
+        }
+
+        received += recv_len;
+        remaining -= recv_len;
+        offset += recv_len;
+        
+        // Log progress every 5% for large files
+        int progress = (received * 100) / req->content_len;
+        if (progress != last_fs_progress && progress % 5 == 0) {
+            ESP_LOGI(TAG, "SPIFFS Progress: %d%% (%d/%d bytes, free heap: %lu)", 
+                     progress, received, req->content_len, (unsigned long)esp_get_free_heap_size());
+            last_fs_progress = progress;
+        }
+        
+        // Yield to other tasks periodically for large uploads
+        if ((received % (buffer_size * 4)) == 0) {
+            vTaskDelay(pdMS_TO_TICKS(10));  // Brief yield every ~8KB
+        }
+    }
+
+    free(buf);  // Clean up allocated buffer
+    ESP_LOGI(TAG, "OTA filesystem update successful, rebooting...");
+    httpd_resp_sendstr(req, "Filesystem Update Successful! Rebooting...");
+    
+    // Reboot after a short delay
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    
+    return ESP_OK;
+}
+
 
 
 static void start_ap_and_captive_portal() {
@@ -1499,6 +1800,16 @@ static void start_ap_and_captive_portal() {
     config.max_uri_handlers = 16;  // Increase limit
     config.stack_size = 8192;      // Increase stack size
     
+    // Configure for large file uploads (OTA)
+    config.recv_wait_timeout = 120;     // 2 minutes timeout for receiving data
+    config.send_wait_timeout = 120;     // 2 minutes timeout for sending data
+    config.lru_purge_enable = true;     // Enable LRU purging of connections
+    config.max_open_sockets = 4;        // Limit concurrent connections
+    config.backlog_conn = 2;            // Reduce backlog
+    
+    ESP_LOGI(TAG, "HTTP server config: recv_timeout=%d, send_timeout=%d, max_sockets=%d", 
+             config.recv_wait_timeout, config.send_wait_timeout, config.max_open_sockets);
+    
     esp_err_t server_err = httpd_start(&server, &config);
     if (server_err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(server_err));
@@ -1512,12 +1823,20 @@ static void start_ap_and_captive_portal() {
     httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
     httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
     httpd_uri_t sysinfo_json = { .uri = "/sysinfo.json", .method = HTTP_GET, .handler = sysinfo_json_get_handler, .user_ctx = NULL };
+    httpd_uri_t ota_firmware = { .uri = "/ota/firmware", .method = HTTP_POST, .handler = ota_firmware_handler, .user_ctx = NULL };
+    httpd_uri_t ota_filesystem = { .uri = "/ota/filesystem", .method = HTTP_POST, .handler = ota_filesystem_handler, .user_ctx = NULL };
+    httpd_uri_t ota_firmware_options = { .uri = "/ota/firmware", .method = HTTP_OPTIONS, .handler = ota_firmware_handler, .user_ctx = NULL };
+    httpd_uri_t ota_filesystem_options = { .uri = "/ota/filesystem", .method = HTTP_OPTIONS, .handler = ota_filesystem_handler, .user_ctx = NULL };
     
     // Register specific handlers first
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_json));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_update));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &parameters_html));
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &sysinfo_json));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_firmware));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_filesystem));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_firmware_options));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_filesystem_options));
     
     // Register wildcard handler last to catch all other requests
     httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
@@ -1554,8 +1873,8 @@ void ap_config_task(void *pvParameter) {
     ESP_LOGI(TAG, "Pack name: '%s'", pack_name);
     ESP_LOGI(TAG, "=== STARTING AP CONFIG MODE ===");
     
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    // Note: esp_netif_init() and esp_event_loop_create_default() 
+    // are already called in main app initialization
     
     // Start the captive portal
     start_ap_and_captive_portal();
@@ -1628,6 +1947,12 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL)); // Add current task to watchdog
     ESP_LOGI(TAG, "Task Watchdog Timer configured successfully");
+
+    // Initialize network stack early for both AP and STA modes
+    ESP_LOGI(TAG, "Initializing network stack...");
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_LOGI(TAG, "Network stack initialized successfully");
 
     ESP_LOGI(TAG, "Waiting 10 seconds for boot button press...");
     gpio_set_direction(BOOT_BTN_GPIO, GPIO_MODE_INPUT);
@@ -1836,8 +2161,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 // Wi-Fi Initialization
 void wifi_init_sta(void)
 {
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    // Note: esp_netif_init() and esp_event_loop_create_default() 
+    // are already called in main app initialization
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
