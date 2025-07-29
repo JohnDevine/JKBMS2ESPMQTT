@@ -58,7 +58,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 4,
+        "w": 6,
         "x": 0,
         "y": 0
       },
@@ -183,9 +183,12 @@
       "options": {
         "legend": {
           "calcs": [
-            "last"
+            "min",
+            "max",
+            "range",
+            "lastNotNull"
           ],
-          "displayMode": "list",
+          "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
@@ -267,7 +270,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 4,
+        "w": 6,
         "x": 0,
         "y": 8
       },
@@ -409,9 +412,11 @@
       "options": {
         "legend": {
           "calcs": [
-            "last"
+            "min",
+            "max",
+            "lastNotNull"
           ],
-          "displayMode": "list",
+          "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
@@ -463,11 +468,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "dark-red"
               },
               {
-                "color": "orange",
+                "color": "super-light-green",
+                "value": 15
+              },
+              {
+                "color": "dark-green",
                 "value": 85
+              },
+              {
+                "color": "#EAB839",
+                "value": 95
               },
               {
                 "color": "dark-red",
@@ -480,8 +493,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 4,
+        "h": 7,
+        "w": 6,
         "x": 0,
         "y": 16
       },
@@ -579,11 +592,19 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "dark-red"
               },
               {
-                "color": "red",
+                "color": "super-light-green",
+                "value": 15
+              },
+              {
+                "color": "dark-green",
                 "value": 80
+              },
+              {
+                "color": "dark-orange",
+                "value": 95
               }
             ]
           },
@@ -592,7 +613,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 7,
         "w": 18,
         "x": 6,
         "y": 16
@@ -679,7 +700,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 24
+        "y": 23
       },
       "id": 11,
       "options": {
@@ -819,13 +840,18 @@
         "h": 8,
         "w": 18,
         "x": 6,
-        "y": 24
+        "y": 23
       },
       "id": 9,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
+          "calcs": [
+            "min",
+            "max",
+            "range",
+            "last"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
@@ -892,7 +918,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 32
+        "y": 31
       },
       "id": 12,
       "options": {
@@ -1032,13 +1058,18 @@
         "h": 8,
         "w": 18,
         "x": 6,
-        "y": 32
+        "y": 31
       },
       "id": 10,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
+          "calcs": [
+            "min",
+            "max",
+            "range",
+            "last"
+          ],
+          "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
@@ -1113,5 +1144,5 @@
   "timezone": "browser",
   "title": "Battery data",
   "uid": "83afb816-308f-453f-bf19-3f785bc466b3",
-  "version": 113
+  "version": 126
 }
