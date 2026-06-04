@@ -13,10 +13,22 @@ This firmware enables an ESP32 (esp32doit-devkit-v1) to interface with a JK BMS 
 - **Comprehensive BMS data coverage** including temperature protection, calibration, and system information
 
 ## Heartbeat LED
-The onboard LED (GPIO2) provides visual confirmation of system health:
-- **LED Flash:** Occurs **only** when an MQTT message is successfully published and confirmed by the broker
-- **No Flash:** Indicates MQTT communication issues (network problems, broker unavailable, etc.)
-- **Reliability:** Combined with the software watchdog, this provides both visual monitoring and automatic recovery capabilities
+The onboard LED (GPIO2) provides visual confirmation of system health using flash codes:
+
+| Flashes | Meaning |
+|--------:|---------|
+| 1 | MQTT publish success (heartbeat) |
+| 2 | Cannot connect to Wi-Fi |
+| 3 | Cannot connect to device (BMS/UART no response or TX issue) |
+| 4 | Cannot connect to MQTT server |
+| 5 | Cannot read device response |
+| 6 | Cannot write to MQTT |
+| 7 | Invalid/corrupt BMS frame (bad header/CRC/too short) |
+| 8 | Software watchdog timeout |
+| 9 | MQTT client unavailable |
+
+- Repeated identical errors are rate-limited in firmware to avoid continuous flashing noise.
+- Combined with the software watchdog, this provides both visual monitoring and automatic recovery capabilities.
 
 ## Pin Usage
 | Signal         | ESP32 Pin      | Description                       |
@@ -91,7 +103,7 @@ https://a.aliexpress.com/_oClgBbe
 
 ### 3. Operation
 - After booting, the ESP32 will connect to your Wi-Fi and MQTT broker.
-- The onboard LED (GPIO2) will flash briefly **only when a message is successfully published** to the MQTT server—this is your heartbeat indicator.
+- The onboard LED (GPIO2) uses flash codes: **1 flash** means successful MQTT publish (heartbeat), while **2-9 flashes** indicate specific fault conditions (see Heartbeat LED table above).
 - Data is published to the topic you set in the configuration page (e.g., `BMS/MyBattery`).
 - The software watchdog automatically monitors system health and will reboot if MQTT communication fails for too long.
 

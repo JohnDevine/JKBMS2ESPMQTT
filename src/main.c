@@ -25,6 +25,8 @@
 #include "freertos/FreeRTOS.h"
 // FreeRTOS task management
 #include "freertos/task.h"
+// FreeRTOS queue (used for non-blocking LED flash signalling)
+#include "freertos/queue.h"
 // ESP32 UART driver
 #include "driver/uart.h"
 // ESP32 GPIO driver
@@ -117,6 +119,22 @@ static const char *TAG = "BMS_READER";
 // Global variable for MQTT client
 static esp_mqtt_client_handle_t mqtt_client;
 static int wifi_retry_num = 0;
+
+// Queue handle for the dedicated LED flash task (holds flash counts).
+static QueueHandle_t s_led_flash_queue = NULL;
+
+// LED flash status/error codes (number of flashes).
+typedef enum {
+    FLASH_CODE_SUCCESS_MQTT_WRITE = 1,     // Keep existing success behavior
+    FLASH_CODE_WIFI_CONNECT_FAIL = 2,
+    FLASH_CODE_DEVICE_CONNECT_FAIL = 3,
+    FLASH_CODE_MQTT_CONNECT_FAIL = 4,
+    FLASH_CODE_DEVICE_READ_FAIL = 5,
+    FLASH_CODE_MQTT_WRITE_FAIL = 6,
+    FLASH_CODE_FRAME_INVALID = 7,
+    FLASH_CODE_WATCHDOG_TIMEOUT = 8,
+    FLASH_CODE_MQTT_CLIENT_UNAVAILABLE = 9
+} flash_code_t;
 
 // Placeholder structures for BMS data
 // This will be populated with more fields later
@@ -244,6 +262,8 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
 void wifi_init_sta(void);
 static void mqtt_app_start(void);
 void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr); // Combined publish function for now
+static void flash_status_code(uint8_t flashes);
+static void signal_error_code(flash_code_t code, const char *reason);
 
 // Forward declaration for DNS hijack task
 void dns_hijack_task(void *pvParameter);
@@ -322,6 +342,9 @@ void send_bms_command(const uint8_t* cmd, size_t len) {
     // (const char*)cmd: Cast command buffer to char pointer as expected by the function.
     int txBytes = uart_write_bytes(UART_NUM, (const char*)cmd, len);
     ESP_LOGI(TAG, "Wrote %d bytes", txBytes); // Log the number of bytes written.
+    if (txBytes < 0 || (size_t)txBytes != len) {
+        signal_error_code(FLASH_CODE_DEVICE_CONNECT_FAIL, "cannot connect/write to BMS device");
+    }
 }
 
 // Parses the raw data received from the BMS and prints it.
@@ -354,12 +377,14 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     // If frame_len_field is minimal (e.g. for header + trailer only, no payload), it would be 4+1+1+1+4+1+4 = 15.
     if (len < 15) { 
         ESP_LOGW(TAG, "Frame too short for basic structure: %d bytes", len);
+        signal_error_code(FLASH_CODE_FRAME_INVALID, "BMS frame too short");
         return;
     }
 
     // 1. Check Start Frame (must be 0x4E, 0x57)
     if (data[0] != 0x4E || data[1] != 0x57) {
         ESP_LOGW(TAG, "Invalid start frame: %02X %02X", data[0], data[1]);
+        signal_error_code(FLASH_CODE_FRAME_INVALID, "invalid BMS start frame");
         return;
     }
     ESP_LOGI(TAG, "Start frame OK");
@@ -374,6 +399,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if (len < (frame_len_field + 2)) { 
         ESP_LOGW(TAG, "Incomplete frame. Expected header(2) + frame_len_field(%d) = %d bytes, but got %d bytes in total.", 
                  frame_len_field, frame_len_field + 2, len);
+        signal_error_code(FLASH_CODE_DEVICE_READ_FAIL, "incomplete BMS frame");
         return;
     }
     // Determine the length of the frame to process.
@@ -415,6 +441,7 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
     if ((uint16_t)crc_calc != crc_received) {
         ESP_LOGE(TAG, "CRC mismatch! Calculated: 0x%04X, Received: 0x%04X. Frame might be corrupt.", 
                  (uint16_t)crc_calc, crc_received);
+        signal_error_code(FLASH_CODE_FRAME_INVALID, "BMS CRC mismatch");
         // return; // Optionally, uncomment to discard frames with bad CRC. For debugging, we might proceed.
     } else {
         ESP_LOGI(TAG, "CRC OK");
@@ -598,36 +625,21 @@ void parse_and_print_bms_data(const uint8_t *data, int len) {
 
     // 5.4 Parse Current (ID 0x84)
     // Structure: ID (1 byte) + Current Data (2 bytes, u16_be).
-    // Current interpretation varies based on `frame_len_field` as per `data_bms_full.py`.
+    // Use a single decode method independent of frame length. Tying current decode
+    // to frame size can produce unstable readings when cell count changes (e.g. 4s vs 8s).
     // Value is in 0.01A.
     if (payload_len > current_offset + 2 && payload[current_offset] == 0x84) {
         uint16_t current_raw = unpack_u16_be(payload, current_offset + 1);
         float current_a;
 
-        ESP_LOGI(TAG, "Current parsing: frame_len_field=%u, current_raw=0x%04X (%u)", 
-                 frame_len_field, current_raw, current_raw);
-
-        // Logic from data_bms_full.py, swapped for alternative interpretation:
-        // `frame_len_field` is the length from the BMS packet (from length field itself to end of CRC).
-        if (frame_len_field < 260) {
-            // Method 2 (Previously for frame_len_field >= 260): MSB indicates sign.
-            // Python: if (value & 0x8000) == 0x8000 : current = (value & 0x7FFF)/100
-            //         else : current = ((value & 0x7FFF)/100) * -1
-            // This means if MSB is set, it's positive current (value & 0x7FFF).
-            // If MSB is clear, it's negative current -(value & 0x7FFF).
-            // Note: This is different from standard two\'s complement.
-            if ((current_raw & 0x8000) == 0x8000) {
-                current_a = (float)(current_raw & 0x7FFF) / 100.0f;
-            } else {
-                current_a = -((float)(current_raw & 0x7FFF) / 100.0f);
-            }
-            ESP_LOGI(TAG, "Current (method 2, frame_len_field < 260): %.2f A", current_a);
+        // JK sign-bit format: bit15 is polarity, lower 15 bits are magnitude in 0.01A.
+        if ((current_raw & 0x8000) == 0x8000) {
+            current_a = (float)(current_raw & 0x7FFF) / 100.0f;
         } else {
-            // Method 1 (Previously for frame_len_field < 260): (10000 - raw_value) * 0.01. This implies 10000 is zero current.
-            // e.g. raw=10000 -> 0A. raw=9900 -> 1A. raw=10100 -> -1A.
-            current_a = (float)(10000 - (int32_t)current_raw) * 0.01f;
-            ESP_LOGI(TAG, "Current (method 1, frame_len_field >= 260): %.2f A", current_a);
+            current_a = -((float)(current_raw & 0x7FFF) / 100.0f);
         }
+
+        ESP_LOGI(TAG, "Current decode: raw=0x%04X -> %.2f A", current_raw, current_a);
 
         if (debug_logging) printf("Current: %.2f A (raw: %u)\n", current_a, current_raw);
         current_bms_data.pack_current = current_a; // Store data
@@ -853,6 +865,7 @@ static void read_bms_data() {
 
         } else { // uart_read_bytes returned 0 or error.
             ESP_LOGW(TAG, "Failed to read data from UART buffer after length check (uart_read_bytes returned %d).", read_len);
+            signal_error_code(FLASH_CODE_DEVICE_READ_FAIL, "cannot read device response");
         }
         // Flush the UART RX buffer to remove any remaining or old data.
         // This is important to prevent interference with the next read cycle.
@@ -860,6 +873,7 @@ static void read_bms_data() {
         ESP_LOGI(TAG, "UART RX buffer flushed.");
     } else { // No data available in UART buffer after the initial wait.
         ESP_LOGW(TAG, "No data available from BMS after %dms wait.", 300);
+        signal_error_code(FLASH_CODE_DEVICE_CONNECT_FAIL, "cannot connect to device (no UART response)");
     }
 }
 
@@ -1900,12 +1914,53 @@ void ap_config_task(void *pvParameter) {
 // Blink task for onboard LED
 #define ONBOARD_LED_GPIO GPIO_NUM_2
 
-// Blink the onboard LED for a short time (heartbeat)
-void blink_heartbeat() {
+// Dedicated task that performs all LED flashing.  It blocks on its own queue so
+// it never interferes with the MQTT task or the main task.
+static void led_flash_task(void *pvParam) {
+    uint8_t flashes;
     gpio_set_direction(ONBOARD_LED_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(ONBOARD_LED_GPIO, 1);
-    vTaskDelay(pdMS_TO_TICKS(50));
     gpio_set_level(ONBOARD_LED_GPIO, 0);
+    while (1) {
+        if (xQueueReceive(s_led_flash_queue, &flashes, portMAX_DELAY) == pdTRUE) {
+            for (uint8_t i = 0; i < flashes; ++i) {
+                gpio_set_level(ONBOARD_LED_GPIO, 1);
+                vTaskDelay(pdMS_TO_TICKS(240));
+                gpio_set_level(ONBOARD_LED_GPIO, 0);
+                vTaskDelay(pdMS_TO_TICKS(240));
+            }
+        }
+    }
+}
+
+// Post a flash count to the LED task queue.  Returns immediately; never blocks.
+static void flash_status_code(uint8_t flashes) {
+    if (flashes == 0 || s_led_flash_queue == NULL) {
+        return;
+    }
+    // Non-blocking send.  If queue is full the flash is silently dropped to
+    // avoid stalling any calling context (main, MQTT callback, etc.).
+    xQueueSend(s_led_flash_queue, &flashes, 0);
+}
+
+// Blink the onboard LED once for a successful MQTT publish (heartbeat).
+void blink_heartbeat() {
+    flash_status_code(1);
+}
+
+static void signal_error_code(flash_code_t code, const char *reason) {
+    static TickType_t last_flash_tick = 0;
+    static flash_code_t last_code = 0;
+    TickType_t now = xTaskGetTickCount();
+
+    // Rate-limit identical codes to avoid flooding the queue.
+    if (code == last_code && (now - last_flash_tick) < pdMS_TO_TICKS(2000)) {
+        return;
+    }
+
+    ESP_LOGE(TAG, "Flash error code %d: %s", (int)code, reason);
+    flash_status_code((uint8_t)code);
+    last_code = code;
+    last_flash_tick = now;
 }
 
 // Main application entry point.
@@ -2012,6 +2067,10 @@ void app_main(void) {
     ESP_LOGI(TAG, "=== STARTING WIFI INIT ===");
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta(); // Initialize Wi-Fi
+
+    // Create the LED flash queue and task now that the scheduler is running.
+    s_led_flash_queue = xQueueCreate(8, sizeof(uint8_t));
+    xTaskCreate(led_flash_task, "led_flash", 2048, NULL, 3, NULL);
     
     // Initialize software watchdog
     // Watchdog timeout is 10× sample interval (in ms), inactive if timeout ≤10,000 ms
@@ -2040,6 +2099,7 @@ void app_main(void) {
             TickType_t elapsed_ms = pdTICKS_TO_MS(current_time - last_successful_publish);
             if (elapsed_ms >= watchdog_timeout_ms) {
                 ESP_LOGE(TAG, "Software watchdog timeout! No successful MQTT publish in %lu ms (timeout: %lu ms)", elapsed_ms, watchdog_timeout_ms);
+                signal_error_code(FLASH_CODE_WATCHDOG_TIMEOUT, "software watchdog timeout");
                 
                 // Debug: Show counter before increment
                 ESP_LOGE(TAG, "*** DEBUG: watchdog_reset_counter BEFORE increment: %lu ***", watchdog_reset_counter);
@@ -2138,6 +2198,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             printf("[WIFI] connect to the AP fail\n");
             printf("[WIFI] WiFi SSID used: %s\n", wifi_ssid);
             printf("[WIFI] WiFi Password used: %s\n", wifi_pass);
+            signal_error_code(FLASH_CODE_WIFI_CONNECT_FAIL, "cannot connect to WiFi");
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         printf("[WIFI] IP_EVENT_STA_GOT_IP received!\n");
@@ -2213,6 +2274,7 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
         printf("[MQTT] Disconnected from broker\n");
+        signal_error_code(FLASH_CODE_MQTT_CONNECT_FAIL, "cannot connect to MQTT server");
         break;
     case MQTT_EVENT_SUBSCRIBED:
         ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
@@ -2240,6 +2302,7 @@ static void mqtt_event_handler(void* arg, esp_event_base_t event_base,
     case MQTT_EVENT_ERROR:
         ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
         printf("[MQTT] Connection error occurred!\n");
+        signal_error_code(FLASH_CODE_MQTT_CONNECT_FAIL, "MQTT client error");
         if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
             ESP_LOGI(TAG, "Last error code reported from esp-tls: 0x%x", event->error_handle->esp_tls_last_esp_err);
             ESP_LOGI(TAG, "Last tls stack error number: 0x%x", event->error_handle->esp_tls_stack_err);
@@ -2353,6 +2416,7 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
     
     if (!mqtt_client) {
         ESP_LOGE(TAG, "MQTT client not initialized!");
+        signal_error_code(FLASH_CODE_MQTT_CLIENT_UNAVAILABLE, "MQTT client unavailable");
         if (debug_logging) printf("[DEBUG] MQTT client not initialized - returning\n");
         return;
     }
@@ -2607,7 +2671,11 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         snprintf(topic, sizeof(topic), "%s", bms_topic);
         if (debug_logging) printf("[DEBUG] About to publish to topic: %s\n", topic);
         if (debug_logging) printf("[DEBUG] JSON payload length: %d\n", strlen(json_string));
-        esp_mqtt_client_publish(mqtt_client, topic, json_string, 0, 1, 0);
+        int msg_id = esp_mqtt_client_publish(mqtt_client, topic, json_string, 0, 1, 0);
+        if (msg_id < 0) {
+            signal_error_code(FLASH_CODE_MQTT_WRITE_FAIL, "cannot write to MQTT");
+            ESP_LOGE(TAG, "MQTT publish failed to %s", topic);
+        }
         ESP_LOGI(TAG, "Published to %s (length: %d)", topic, strlen(json_string));
         free(json_string);
     }
