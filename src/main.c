@@ -120,6 +120,10 @@ static const char *TAG = "BMS_READER";
 static esp_mqtt_client_handle_t mqtt_client;
 static int wifi_retry_num = 0;
 
+// Global HTTP server handle and mode tracking
+static httpd_handle_t global_server = NULL;
+static bool is_ap_mode = false;  // Track whether we're in AP mode or STA mode
+
 // Queue handle for the dedicated LED flash task (holds flash counts).
 static QueueHandle_t s_led_flash_queue = NULL;
 
@@ -1304,9 +1308,20 @@ esp_err_t parameters_html_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Captive portal redirect handler
+// Captive portal redirect handler (only used in AP mode)
 esp_err_t captive_redirect_handler(httpd_req_t *req) {
     ESP_LOGD(TAG, "Captive portal request: %s", req->uri);
+    
+    // In STA mode, don't redirect - serve normally
+    if (!is_ap_mode) {
+        // Serve parameters.html directly in STA mode
+        if (strcmp(req->uri, "/") == 0 || strcmp(req->uri, "/index") == 0) {
+            return parameters_html_handler(req);
+        }
+        // For any other request, just return 404 (not a captive portal in STA mode)
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+    }
     
     // If the request is already for /parameters.html, serve it directly
     if (strcmp(req->uri, "/parameters.html") == 0) {
@@ -1324,7 +1339,7 @@ esp_err_t captive_redirect_handler(httpd_req_t *req) {
         return params_update_post_handler(req);
     }
     
-    // For any other request, redirect to the configuration page
+    // For any other request in AP mode, redirect to the configuration page
     ESP_LOGD(TAG, "Redirecting %s to /parameters.html", req->uri);
     
     const char* redirect_html = 
@@ -1369,7 +1384,7 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
     // version file (version.txt in project root). The master file serves as 
     // the source of truth, while this file is deployed to the ESP32 for 
     // runtime display in the web interface.
-    char version_str[16] = "1.4.1"; // Default fallback - update when master version changes
+    char version_str[16] = "1.4.2"; // Default fallback - update when master version changes
     FILE *version_file = fopen("/spiffs/version.txt", "r");
     if (version_file) {
         if (fgets(version_str, sizeof(version_str), version_file)) {
@@ -1750,7 +1765,69 @@ static esp_err_t ota_filesystem_handler(httpd_req_t *req) {
 
 
 
-static void start_ap_and_captive_portal() {
+// HTTP server startup function - used by both AP and STA modes
+static void start_http_server(void) {
+    if (global_server != NULL) {
+        ESP_LOGW(TAG, "HTTP server already running, skipping startup");
+        return;
+    }
+    
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.uri_match_fn = httpd_uri_match_wildcard;
+    config.max_uri_handlers = 16;  // Increase limit
+    config.stack_size = 8192;      // Increase stack size
+    
+    // Configure for large file uploads (OTA)
+    config.recv_wait_timeout = 120;     // 2 minutes timeout for receiving data
+    config.send_wait_timeout = 120;     // 2 minutes timeout for sending data
+    config.lru_purge_enable = true;     // Enable LRU purging of connections
+    config.max_open_sockets = 4;        // Limit concurrent connections
+    config.backlog_conn = 2;            // Reduce backlog
+    
+    ESP_LOGI(TAG, "HTTP server config: recv_timeout=%d, send_timeout=%d, max_sockets=%d", 
+             config.recv_wait_timeout, config.send_wait_timeout, config.max_open_sockets);
+    
+    esp_err_t server_err = httpd_start(&global_server, &config);
+    if (server_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(server_err));
+        return;
+    }
+    
+    ESP_LOGI(TAG, "HTTP server started successfully");
+    
+    // Register handlers in order of specificity (most specific first)
+    httpd_uri_t params_json = { .uri = "/params.json", .method = HTTP_GET, .handler = params_json_get_handler, .user_ctx = NULL };
+    httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
+    httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
+    httpd_uri_t sysinfo_json = { .uri = "/sysinfo.json", .method = HTTP_GET, .handler = sysinfo_json_get_handler, .user_ctx = NULL };
+    httpd_uri_t ota_firmware = { .uri = "/ota/firmware", .method = HTTP_POST, .handler = ota_firmware_handler, .user_ctx = NULL };
+    httpd_uri_t ota_filesystem = { .uri = "/ota/filesystem", .method = HTTP_POST, .handler = ota_filesystem_handler, .user_ctx = NULL };
+    httpd_uri_t ota_firmware_options = { .uri = "/ota/firmware", .method = HTTP_OPTIONS, .handler = ota_firmware_handler, .user_ctx = NULL };
+    httpd_uri_t ota_filesystem_options = { .uri = "/ota/filesystem", .method = HTTP_OPTIONS, .handler = ota_filesystem_handler, .user_ctx = NULL };
+    
+    // Register specific handlers first
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &params_json));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &params_update));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &parameters_html));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &sysinfo_json));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &ota_firmware));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &ota_filesystem));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &ota_firmware_options));
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &ota_filesystem_options));
+    
+    // Register wildcard handler last to catch all other requests (captive portal in AP mode, 404 in STA mode)
+    httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
+    ESP_ERROR_CHECK(httpd_register_uri_handler(global_server, &captive));
+    
+    ESP_LOGI(TAG, "All HTTP handlers registered successfully");
+    if (is_ap_mode) {
+        ESP_LOGI(TAG, "HTTP server ready for AP captive portal");
+    } else {
+        ESP_LOGI(TAG, "HTTP server ready for STA mode on local network");
+    }
+}
+
+
     ESP_LOGI(TAG, "Starting AP and captive portal...");
     
     // Start AP mode only for configuration (no STA mode to avoid connection attempts)
@@ -1807,57 +1884,31 @@ static void start_ap_and_captive_portal() {
     init_spiffs();
     ESP_LOGI(TAG, "init_spiffs() completed successfully");
     
-    // Start HTTP server
-    httpd_handle_t server = NULL;
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 16;  // Increase limit
-    config.stack_size = 8192;      // Increase stack size
+    // Set AP mode flag and start HTTP server
+    is_ap_mode = true;
+    start_http_server();
     
-    // Configure for large file uploads (OTA)
-    config.recv_wait_timeout = 120;     // 2 minutes timeout for receiving data
-    config.send_wait_timeout = 120;     // 2 minutes timeout for sending data
-    config.lru_purge_enable = true;     // Enable LRU purging of connections
-    config.max_open_sockets = 4;        // Limit concurrent connections
-    config.backlog_conn = 2;            // Reduce backlog
+    // Wait a moment for the HTTP server to stabilize
+    vTaskDelay(pdMS_TO_TICKS(2000));
     
-    ESP_LOGI(TAG, "HTTP server config: recv_timeout=%d, send_timeout=%d, max_sockets=%d", 
-             config.recv_wait_timeout, config.send_wait_timeout, config.max_open_sockets);
-    
-    esp_err_t server_err = httpd_start(&server, &config);
-    if (server_err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(server_err));
-        return;
+    // Start DNS hijack server for captive portal
+    TaskHandle_t dns_task_handle = NULL;
+    BaseType_t dns_task_result = xTaskCreate(dns_hijack_task, "dns_hijack_task", 4096, NULL, 4, &dns_task_handle);
+    if (dns_task_result == pdPASS) {
+        ESP_LOGI(TAG, "DNS hijack task started successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to create DNS hijack task");
     }
     
-    ESP_LOGI(TAG, "HTTP server started successfully");
+    // Get AP SSID for logging
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    char ap_ssid[32];
+    snprintf(ap_ssid, sizeof(ap_ssid), "ESP32-CONFIG-%02X%02X", mac[4], mac[5]);
     
-    // Register handlers in order of specificity (most specific first)
-    httpd_uri_t params_json = { .uri = "/params.json", .method = HTTP_GET, .handler = params_json_get_handler, .user_ctx = NULL };
-    httpd_uri_t params_update = { .uri = "/update", .method = HTTP_POST, .handler = params_update_post_handler, .user_ctx = NULL };
-    httpd_uri_t parameters_html = { .uri = "/parameters.html", .method = HTTP_GET, .handler = parameters_html_handler, .user_ctx = NULL };
-    httpd_uri_t sysinfo_json = { .uri = "/sysinfo.json", .method = HTTP_GET, .handler = sysinfo_json_get_handler, .user_ctx = NULL };
-    httpd_uri_t ota_firmware = { .uri = "/ota/firmware", .method = HTTP_POST, .handler = ota_firmware_handler, .user_ctx = NULL };
-    httpd_uri_t ota_filesystem = { .uri = "/ota/filesystem", .method = HTTP_POST, .handler = ota_filesystem_handler, .user_ctx = NULL };
-    httpd_uri_t ota_firmware_options = { .uri = "/ota/firmware", .method = HTTP_OPTIONS, .handler = ota_firmware_handler, .user_ctx = NULL };
-    httpd_uri_t ota_filesystem_options = { .uri = "/ota/filesystem", .method = HTTP_OPTIONS, .handler = ota_filesystem_handler, .user_ctx = NULL };
-    
-    // Register specific handlers first
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_json));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &params_update));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &parameters_html));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &sysinfo_json));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_firmware));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_filesystem));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_firmware_options));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &ota_filesystem_options));
-    
-    // Register wildcard handler last to catch all other requests
-    httpd_uri_t captive = { .uri = "/*", .method = HTTP_GET, .handler = captive_redirect_handler, .user_ctx = NULL };
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &captive));
-    
-    ESP_LOGI(TAG, "All HTTP handlers registered successfully");
-    ESP_LOGI(TAG, "Captive portal ready - connect to '%s' and visit any website", ap_ssid);
+    ESP_LOGI(TAG, "AP configuration mode fully initialized");
+    ESP_LOGI(TAG, "Connect to '%s' network and visit any website to configure", ap_ssid);
+}
 }
 
 void ap_config_task(void *pvParameter) {
@@ -1890,23 +1941,9 @@ void ap_config_task(void *pvParameter) {
     // Note: esp_netif_init() and esp_event_loop_create_default() 
     // are already called in main app initialization
     
-    // Start the captive portal
-    start_ap_and_captive_portal();
+    // Start the AP and captive portal
+    setup_ap_mode();
     
-    // Wait a moment for the HTTP server to stabilize
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    
-    // Start DNS hijack server for captive portal
-    TaskHandle_t dns_task_handle = NULL;
-    BaseType_t dns_task_result = xTaskCreate(dns_hijack_task, "dns_hijack_task", 4096, NULL, 4, &dns_task_handle);
-    if (dns_task_result == pdPASS) {
-        ESP_LOGI(TAG, "DNS hijack task started successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to create DNS hijack task");
-    }
-    
-    ESP_LOGI(TAG, "AP configuration mode fully initialized");
-    ESP_LOGI(TAG, "Connect to ESP32-CONFIG-XXXX network and visit any website to configure");
     
     vTaskDelete(NULL);
 }
@@ -2206,6 +2243,13 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         printf("[WIFI] got ip:" IPSTR "\n", IP2STR(&event->ip_info.ip));
         printf("Obtained IP address: " IPSTR "\n", IP2STR(&event->ip_info.ip));
         wifi_retry_num = 0;
+        
+        // Start HTTP server in STA mode for web configuration access from local network
+        printf("[WIFI] Starting HTTP server for STA mode...\n");
+        is_ap_mode = false;
+        start_http_server();
+        printf("[WIFI] HTTP server started for local network access\n");
+        
         // Start MQTT client once IP is obtained
         printf("[WIFI] About to start MQTT client...\n");
         mqtt_app_start();

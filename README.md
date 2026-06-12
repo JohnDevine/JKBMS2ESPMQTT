@@ -77,7 +77,7 @@ https://a.aliexpress.com/_oClgBbe
 ## Configuration & Usage
 
 ### WiFi Configuration Improvements
-**Version 1.4.1** includes significant improvements to the WiFi configuration system:
+**Version 1.4.2** includes significant improvements to the WiFi configuration system:
 
 - **Simplified SSID Entry**: Manual text input replaces unreliable WiFi network scanning
 - **Better Reliability**: Eliminated intermittent issues with WiFi dropdown functionality  
@@ -124,7 +124,7 @@ The ESP32 publishes comprehensive BMS data in a structured JSON format to the co
     "WiFiRSSI": 75,                    // WiFi signal strength (% - 0-100%)
     "IPAddress": "192.168.1.150",      // Current IP address
     "CPUTemperature": 32.0,            // ESP32 CPU temperature (°C - placeholder*)
-    "SoftwareVersion": "1.4.1",        // Firmware version
+    "SoftwareVersion": "1.4.2",        // Firmware version
     "WDTRestartCount": 2               // Watchdog restart counter
   },
   
@@ -347,7 +347,7 @@ This project uses a dual-file version management system for consistency between 
 - **Documentation:** Update README and any version references when releasing
 - **Format:** Use semantic versioning (e.g., 1.2.1) without extra whitespace
 
-**Current Version:** 1.4.1
+**Current Version:** 1.4.2
 
 ## Programming Documentation
 

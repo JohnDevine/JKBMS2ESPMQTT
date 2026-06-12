@@ -14,18 +14,21 @@
    ```
 
 ## Current Status:
-- Master version: 1.3.0 (version.txt)
-- Runtime version: 1.3.0 (data/version.txt)
-- Code fallback: 1.3.0 (src/main.c)
-- README reference: 1.3.0
+- Master version: 1.4.2 (version.txt)
+- Runtime version: 1.4.2 (data/version.txt)
+- Code fallback: 1.4.2 (src/main.c)
+- README reference: 1.4.2
 
 All version references are in sync ✓
 
-## Version 1.3.0 Changes:
-- **Enhanced BMS Data Coverage**: Added comprehensive BMS data fields including all protection parameters, calibration settings, and system information
+## Version 1.4.2 Changes:
+- **WiFi Configuration Improvements**: Manual text input for SSID eliminates unreliable network scanning
+- **Better Reliability**: Improved configuration system stability and consistency
+- **Version Management Documentation**: Comprehensive dual-file version management system (version.txt + data/version.txt)
+- **Comprehensive MQTT Data**: Maintains all 30+ BMS parameters with processor metrics and watchdog monitoring
+- **Stable Operation**: Production-ready firmware with automatic recovery capabilities
+
+## Previous Version (1.4.1) Includes:
+- **Enhanced BMS Data Coverage**: Comprehensive BMS data fields including all protection parameters
 - **Structured MQTT Payload**: Organized data into logical sections (systemStatus, systemConfig, temperatureProtection, systemInfo)
-- **Raw Field Access**: Added rawExtraFields section for debugging and specialized analysis
-- **Increased Field Limit**: Expanded from 25 to all available BMS fields (32 max)
-- **Extended Documentation**: Added comprehensive MQTT data structure documentation
-- **Payload Size**: Increased to ~2,760-2,780 characters with all available BMS data
-- **System Stability**: Maintained reliable operation with larger payload size
+- **Raw Field Access**: rawExtraFields section for debugging and specialized analysis
