@@ -124,6 +124,10 @@ static int wifi_retry_num = 0;
 static httpd_handle_t global_server = NULL;
 static bool is_ap_mode = false;  // Track whether we're in AP mode or STA mode
 
+#ifndef APP_VERSION_STR
+#define APP_VERSION_STR "0.0.0"
+#endif
+
 // Queue handle for the dedicated LED flash task (holds flash counts).
 static QueueHandle_t s_led_flash_queue = NULL;
 
@@ -1379,23 +1383,7 @@ static esp_err_t sysinfo_json_get_handler(httpd_req_t *req) {
     #endif
     const char *idf_ver = esp_get_idf_version();
     
-    // Read version from version.txt file in SPIFFS
-    // Note: This file (data/version.txt) must be kept in sync with the master 
-    // version file (version.txt in project root). The master file serves as 
-    // the source of truth, while this file is deployed to the ESP32 for 
-    // runtime display in the web interface.
-    char version_str[16] = "1.4.2"; // Default fallback - update when master version changes
-    FILE *version_file = fopen("/spiffs/version.txt", "r");
-    if (version_file) {
-        if (fgets(version_str, sizeof(version_str), version_file)) {
-            // Remove trailing newline if present
-            char *newline = strchr(version_str, '\n');
-            if (newline) *newline = '\0';
-            char *carriage_return = strchr(version_str, '\r');
-            if (carriage_return) *carriage_return = '\0';
-        }
-        fclose(version_file);
-    }
+    const char *version_str = APP_VERSION_STR;
     
     esp_reset_reason_t reason = esp_reset_reason();
     const char *reason_str = "Unknown";
@@ -1827,8 +1815,8 @@ static void start_http_server(void) {
     }
 }
 
-
-    ESP_LOGI(TAG, "Starting AP and captive portal...");
+void setup_ap_mode(void) {
+    ESP_LOGI(TAG, "Starting AP configuration mode...");
     
     // Start AP mode only for configuration (no STA mode to avoid connection attempts)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -1900,15 +1888,8 @@ static void start_http_server(void) {
         ESP_LOGE(TAG, "Failed to create DNS hijack task");
     }
     
-    // Get AP SSID for logging
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    char ap_ssid[32];
-    snprintf(ap_ssid, sizeof(ap_ssid), "ESP32-CONFIG-%02X%02X", mac[4], mac[5]);
-    
     ESP_LOGI(TAG, "AP configuration mode fully initialized");
     ESP_LOGI(TAG, "Connect to '%s' network and visit any website to configure", ap_ssid);
-}
 }
 
 void ap_config_task(void *pvParameter) {
@@ -2424,33 +2405,8 @@ static float get_cpu_temperature(void) {
     return 25.0 + (esp_random() % 20); // Simulated temperature 25-45°C for demonstration
 }
 
-static char* get_software_version(void) {
-    static char version_str[16] = "0.0.0"; // Default fallback - indicates version file not read
-    static bool version_loaded = false;
-    
-    if (!version_loaded) {
-        ESP_LOGI(TAG, "Attempting to read version from /spiffs/version.txt");
-        FILE *version_file = fopen("/spiffs/version.txt", "r");
-        if (version_file) {
-            ESP_LOGI(TAG, "Version file opened successfully");
-            if (fgets(version_str, sizeof(version_str), version_file)) {
-                ESP_LOGI(TAG, "Read version string: '%s'", version_str);
-                // Remove trailing newline if present
-                char *newline = strchr(version_str, '\n');
-                if (newline) *newline = '\0';
-                char *carriage_return = strchr(version_str, '\r');
-                if (carriage_return) *carriage_return = '\0';
-                ESP_LOGI(TAG, "Cleaned version string: '%s'", version_str);
-            } else {
-                ESP_LOGE(TAG, "Failed to read from version file");
-            }
-            fclose(version_file);
-        } else {
-            ESP_LOGE(TAG, "Failed to open /spiffs/version.txt - file may not exist or SPIFFS not mounted");
-        }
-        version_loaded = true;
-    }
-    return version_str;
+static const char* get_software_version(void) {
+    return APP_VERSION_STR;
 }
 
 // Placeholder for publishing BMS data
@@ -2490,7 +2446,7 @@ void publish_bms_data_mqtt(const bms_data_t *bms_data_ptr) {
         cJSON_AddNumberToObject(processor_root, "CPUTemperature", cpu_temp);
         
         // Software Version
-        char *software_version = get_software_version();
+        const char *software_version = get_software_version();
         cJSON_AddStringToObject(processor_root, "SoftwareVersion", software_version);
         
         // Watchdog Restart Count

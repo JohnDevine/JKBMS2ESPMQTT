@@ -30,10 +30,10 @@ pio run --target upload     # Upload firmware
 pio device monitor --baud 115200  # Monitor serial output
 ```
 
-#### Dual Version Management
-- Master: `version.txt` (project root)
-- Runtime: `data/version.txt` (SPIFFS - displayed in web UI)
-- **Critical**: Both files must stay synchronized for version display
+#### Version Management
+- Source of truth: `version.txt` (project root)
+- Build-time define: `APP_VERSION_STR` injected by `firmware/set_version.py`
+- **Critical**: Do not add runtime version files; web UI must use compiled version
 
 #### Partition Scheme (partitions.csv)
 - OTA-ready: dual app partitions (app0/app1) for future OTA updates
@@ -151,7 +151,7 @@ esp_log_level_set("*", ESP_LOG_DEBUG);  // Full debug (all messages)
 - `data/parameters.html` - Web configuration interface  
 - `platformio.ini` - Build configuration (ESP-IDF 5.4.0)
 - `partitions.csv` - Memory layout (OTA-ready)
-- `VERSION_MANAGEMENT.md` - Version sync procedures
+- `README.md` - Build, deployment, and versioning procedures
 
 ### Key Functions to Understand
 - `app_main()` - Entry point and main loop

@@ -321,29 +321,23 @@ See LICENSE file.
 
 ## Version Management
 
-This project uses a dual-file version management system for consistency between development and runtime display.
+This project uses a single-source version management system.
 
-### Version Files
-- **Master Version File:** `version.txt` (project root)
-  - **Purpose:** Source of truth for project version
+### Version File
+- **Source of Truth:** `version.txt` (project root)
+  - **Purpose:** Single authoritative project version
   - **Usage:** Update this file when releasing new versions
-  - **Version Control:** Track version changes in git commits
-  
-- **Runtime Version File:** `data/version.txt` (SPIFFS filesystem)
-  - **Purpose:** Displays version in web interface
-  - **Usage:** Must be kept in sync with master version file
-  - **Deployment:** Gets uploaded to ESP32 via SPIFFS
+  - **Build behavior:** Injected into firmware at build time as `APP_VERSION_STR` via `firmware/set_version.py`
 
-### Version Update Process
-1. **Update master version:** Edit `version.txt` in project root
-2. **Sync to runtime version:** Copy the same version to `data/version.txt`
-3. **Build filesystem:** `pio run --target buildfs`
-4. **Upload filesystem:** `pio run --target uploadfs`
-5. **Build and upload firmware:** `pio run --target upload`
+### Release Version Procedure
+1. **Set new version:** Update `version.txt`
+2. **Update release notes:** Add/update entries in `CHANGELOG.md`
+3. **Build and upload firmware:** `pio run -e esp32doit-devkit-v1 -t upload`
+4. **Upload filesystem only if web assets changed:** `pio run -e esp32doit-devkit-v1 -t uploadfs`
+5. **Verify on device UI/API:** Open `/sysinfo.json` and confirm `version`
 
 ### Important Notes
-- **Keep files in sync:** Both version files must contain identical version numbers
-- **Web interface:** Reads version from `/spiffs/version.txt` (the data/ directory file)
+- **Single source:** Version is compiled from `version.txt`; SPIFFS version files are not used
 - **Documentation:** Update README and any version references when releasing
 - **Format:** Use semantic versioning (e.g., 1.2.1) without extra whitespace
 

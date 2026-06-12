@@ -339,6 +339,7 @@
                 "ESP_PLATFORM",
                 "PLATFORMIO=60119",
                 "ARDUINO_ESP32_DEV",
+                "APP_VERSION_STR=\"1.4.2\"",
                 ""
             ],
             "cStandard": "gnu17",
